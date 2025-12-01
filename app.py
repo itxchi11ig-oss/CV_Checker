@@ -5,7 +5,6 @@ import docx
 import io
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
-import numpy as np
 import openai
 from enum import Enum
 
@@ -321,7 +320,6 @@ class CVEvaluator:
         
         feedback_templates = {
             Language.ENGLISH: {
-            Language.ENGLISH: {
                 "excellent": "Excellent match! Your CV aligns very well with the job requirements.",
                 "good": "Good match. Your CV shows relevant experience with room for improvement.",
                 "moderate": "Moderate match. Consider tailoring your CV more specifically to this role.",
@@ -381,7 +379,6 @@ class CVEvaluator:
                 "keywords_medium": "Presenza moderata di parole chiave. Aggiungi più termini rilevanti.",
                 "keywords_low": "Bassa corrispondenza di parole chiave. Includi più competenze specifiche."
             }
-        }
         }
         
         templates = feedback_templates.get(language, feedback_templates[Language.ENGLISH])
