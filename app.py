@@ -2,293 +2,312 @@ import streamlit as st
 from sentence_transformers import SentenceTransformer, util
 import PyPDF2
 import docx
-import re
+from enum import Enum
 import math
+import re
 from dataclasses import dataclass
-from typing import List, Dict, Tuple, Set
-from thefuzz import process, fuzz
+from typing import List, Dict, Tuple, Set, Optional
+from thefuzz import process, fuzz  # pip install thefuzz
+import openai
 
 # ==================== CONFIGURATION ====================
 
 st.set_page_config(
-    page_title="Deep Match AI",
-    page_icon="🧠",
+    page_title="Ensemble CV Matcher",
+    page_icon="⚖️",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
-# ==================== CORE ENGINE ====================
+class Language(Enum):
+    ENGLISH = "en"
+    GERMAN = "de"
+    FRENCH = "fr"
+    SPANISH = "es"
+    ITALIAN = "it"
+
+def get_safe_lang_code(lang) -> str:
+    if isinstance(lang, Language): return lang.value
+    if isinstance(lang, str): return lang
+    try: return lang.value
+    except AttributeError: return "en"
+
+# ==================== ADVANCED LOGIC LAYER ====================
 
 @dataclass
-class AnalysisResult:
-    score: float
+class MatchResult:
+    final_score: float
     semantic_score: float
     keyword_score: float
-    best_chunks: List[str]
-    missing_critical: List[str]
-    matched_critical: List[str]
+    matched_skills: List[str]
+    missing_skills: List[str]
+    feedback: str
+    ai_analysis: Optional[str] = None
 
-class TextProcessor:
+class TextCleaner:
     @staticmethod
     def extract_text(file) -> str:
-        """Robust text extraction that handles multi-column PDFs"""
         try:
             name = file.name.lower()
             text = ""
             if name.endswith('.pdf'):
                 reader = PyPDF2.PdfReader(file)
-                # Extract text and treat newlines as potential paragraph breaks
-                text = " ||| ".join([page.extract_text() for page in reader.pages])
+                text = " ".join([page.extract_text() or "" for page in reader.pages])
             elif name.endswith('.docx'):
                 doc = docx.Document(file)
-                text = " ||| ".join([p.text for p in doc.paragraphs if p.text.strip()])
+                text = "\n".join([p.text for p in doc.paragraphs])
             elif name.endswith('.txt'):
                 text = file.getvalue().decode('utf-8')
-            
-            # Cleaning: Remove multiple spaces, keep structure
-            return re.sub(r'\s+', ' ', text).strip()
+            return text
         except:
             return ""
 
     @staticmethod
-    def get_chunks(text: str, chunk_size: int = 50) -> List[str]:
+    def clean_jd_fluff(text: str) -> List[str]:
         """
-        Splits text into sliding windows (chunks). 
-        This allows us to find specific sentences that match, rather than averaging the whole doc.
+        Splits JD into chunks to isolate 'Requirements' from 'Benefits/About Us'.
+        Returns a list of chunks (paragraphs).
         """
-        # Split by logical delimiters (sentences or user defined breaks)
-        # We replace the PDF separators ||| with actual splits
-        raw_parts = text.split("|||")
-        
-        chunks = []
-        for part in raw_parts:
-            # Clean the part
-            clean_part = part.strip()
-            if len(clean_part) > 30: # Ignore tiny fragments
-                chunks.append(clean_part)
-        
-        return chunks
+        # Split by double newlines or long spaces
+        chunks = re.split(r'\n\s*\n', text)
+        return [c.strip() for c in chunks if len(c.split()) > 10]
 
-class DeepMatchEngine:
+    @staticmethod
+    def extract_entities(text: str) -> Set[str]:
+        """
+        Extracts Proper Nouns (Capitalized Words) and Technical Terms.
+        """
+        # Normalize fancy quotes
+        text = text.replace("’", "'").replace("“", '"')
+        
+        # 1. Regex for Capitalized Words (e.g. "Project Management", "Python")
+        # We also allow C++, C#, .NET etc.
+        pattern = r'\b[A-Z][a-zA-Z0-9]*(?:\s[A-Z][a-zA-Z0-9]*)*\b|\b[a-zA-Z0-9\.]+\+\+\b|\bC#\b|\.NET\b'
+        matches = re.findall(pattern, text)
+        
+        # Filter stopwords
+        stopwords = {"The", "A", "An", "To", "For", "With", "In", "On", "At", "By", "We", "You", "And", "Or", "If", "Be", "Is", "Are", "This", "That", "It", "Of", "About", "Us", "Job", "Role", "Work", "Team", "Experience", "Skills", "Requirements", "Duties"}
+        
+        cleaned = set()
+        for m in matches:
+            clean_m = m.strip()
+            if len(clean_m) > 2 and clean_m not in stopwords:
+                cleaned.add(clean_m)
+        
+        return cleaned
+
+class EnsembleMatcher:
     def __init__(self):
-        # We use a smaller, faster, but high-quality model
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
-        
-        # Words that usually indicate "Requirements" in a JD
-        self.fluff_markers = ["equal opportunity", "gender", "race", "color", "religion", "sexual orientation", "veteran"]
+        # High quality multilingual model
+        self.model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
 
-    def extract_hard_skills(self, text: str) -> Set[str]:
+    def calculate_ensemble_semantic_score(self, cv_text: str, jd_text: str) -> float:
         """
-        Aggressive extraction of Capitalized Phrases (Proper Nouns) and Tech Terms.
+        Runs TWO semantic checks and picks the winner.
+        1. Whole CV vs Whole JD (Global Context)
+        2. Whole CV vs JD Chunks (Did we match the 'Requirements' paragraph?)
         """
-        # 1. Preserve Tech Stack
-        text = text.replace("C++", "Cpp").replace(".NET", "DotNet").replace("Node.js", "Nodejs")
+        cv_emb = self.model.encode(cv_text, convert_to_tensor=True)
         
-        # 2. Find Capitalized Words (Potential Skills) inside the text
-        # Logic: If a word is Capitalized in the middle of a sentence, it's likely a Proper Noun (Skill/Tool)
-        pattern = r'\b[A-Z][a-zA-Z0-9#\+]*\b' 
-        candidates = set(re.findall(pattern, text))
+        # Test 1: Global Match
+        jd_emb_global = self.model.encode(jd_text, convert_to_tensor=True)
+        score_global = float(util.cos_sim(cv_emb, jd_emb_global)[0][0])
         
-        # Filter out common junk
-        stopwords = {"The", "A", "An", "To", "For", "With", "In", "On", "At", "By", "We", "You", "And", "Or", "If"}
-        skills = {w for w in candidates if w not in stopwords and len(w) > 2}
+        # Test 2: Local Chunk Match (The "Needle in Haystack" search)
+        jd_chunks = TextCleaner.clean_jd_fluff(jd_text)
+        if not jd_chunks:
+            score_local = 0.0
+        else:
+            jd_chunk_embs = self.model.encode(jd_chunks, convert_to_tensor=True)
+            cos_scores = util.cos_sim(cv_emb, jd_chunk_embs)[0]
+            score_local = float(cos_scores.max()) # Take the BEST matching chunk
         
-        return skills
+        # WINNER TAKES ALL strategy
+        # If your resume matches the "Requirements" chunk perfectly (0.6), but misses the "About Us" (0.1),
+        # The global average might be 0.35. We want the 0.6.
+        raw_score = max(score_global, score_local)
+        
+        # RECRUITER CURVE (Sigmoid)
+        # 0.25 -> 50%
+        # 0.45 -> 85%
+        # 0.65 -> 98%
+        final_semantic = 1 / (1 + math.exp(-12 * (raw_score - 0.25)))
+        
+        return final_semantic
 
-    def evaluate(self, cv_text: str, jd_text: str) -> AnalysisResult:
-        # 1. Clean JD (Remove Legal Fluff)
-        jd_clean = jd_text
-        for marker in self.fluff_markers:
-            if marker in jd_clean.lower():
-                # Rough logic: cut text after legal markers appear if they are at the end
-                pass 
-
-        # 2. CHUNK-BASED SEMANTIC SCORING (The Google Method)
-        # Instead of comparing Doc vs Doc, we compare CV_Chunks vs Whole_JD
-        cv_chunks = TextProcessor.get_chunks(cv_text)
+    def calculate_keyword_score(self, cv_text: str, jd_text: str) -> Tuple[float, List[str], List[str]]:
+        """
+        Fuzzy matches extracted entities (Hard Skills).
+        """
+        jd_skills = TextCleaner.extract_entities(jd_text)
+        cv_text_lower = cv_text.lower()
         
-        if not cv_chunks:
-            return AnalysisResult(0,0,0,[],[],[])
-
-        # Encode JD once
-        jd_embedding = self.model.encode(jd_clean, convert_to_tensor=True)
-        
-        # Encode all CV chunks
-        cv_embeddings = self.model.encode(cv_chunks, convert_to_tensor=True)
-        
-        # Compute cosine similarities for every chunk
-        similarities = util.cos_sim(cv_embeddings, jd_embedding)
-        
-        # MAX-POOLING STRATEGY
-        # We take the TOP 5 matching paragraphs from your CV. 
-        # If your experience section matches, but your hobbies don't, we only care about experience.
-        top_k = min(5, len(cv_chunks))
-        top_scores, top_indices = similarities.topk(top_k, dim=0)
-        
-        # Average of your BEST 5 chunks
-        raw_semantic_score = float(top_scores.mean())
-        
-        # Curve the score (0.4 is usually a great chunk match)
-        semantic_score = 1 / (1 + math.exp(-15 * (raw_semantic_score - 0.35)))
-        
-        # 3. FUZZY KEYWORD SCORING (The ATS Check)
-        jd_skills = self.extract_hard_skills(jd_clean)
-        cv_raw = cv_text.lower()
-        
-        matched_skills = []
-        missing_skills = []
+        matched = []
+        missing = []
         
         if not jd_skills:
-            keyword_score = 1.0 # No hard skills detected in JD? Free pass.
-        else:
-            hits = 0
-            for skill in jd_skills:
-                # Fuzzy Search: "Javascript" matches "Java Script"
-                # We search the whole CV text for this skill
-                # We use a partial ratio because the skill might be embedded in a sentence
-                # Threshold 85 is strict enough to avoid "Java" matching "JavaScript" incorrectly usually, 
-                # but "React" matching "ReactJS" works.
-                if skill.lower() in cv_raw:
-                    hits += 1
-                    matched_skills.append(skill)
-                else:
-                    # Deep Fuzzy Check
-                    is_present = False
-                    # Check against chunks for context
-                    best_match = process.extractOne(skill, cv_chunks, scorer=fuzz.partial_ratio)
-                    if best_match and best_match[1] > 90:
-                        hits += 1
-                        matched_skills.append(skill)
-                        is_present = True
-                    
-                    if not is_present:
-                        missing_skills.append(skill)
-            
-            keyword_score = hits / len(jd_skills)
-            # Boost keyword score: 50% match is usually enough for human recruiter
-            keyword_score = min(1.0, keyword_score * 1.5)
-
-        # 4. FINAL WEIGHTING
-        # 60% Semantic (Did you describe the right work?)
-        # 40% Keywords (Did you list the specific tools?)
-        final_score = (semantic_score * 0.6) + (keyword_score * 0.4)
+            return 1.0, [], [] # No hard skills found in JD? Benefit of doubt.
         
-        best_chunks_text = [cv_chunks[i] for i in top_indices.flatten().tolist()]
+        hits = 0
+        for skill in jd_skills:
+            # 1. Direct Search (Fast)
+            if skill.lower() in cv_text_lower:
+                hits += 1
+                matched.append(skill)
+                continue
+                
+            # 2. Fuzzy Search (Slow but catches "React.js" vs "React")
+            # We assume CV is one giant string. We check if the skill exists roughly.
+            # partial_ratio allows "React" to match inside "I used ReactJS in my project"
+            if fuzz.partial_ratio(skill.lower(), cv_text_lower) >= 85:
+                hits += 1
+                matched.append(skill)
+            else:
+                missing.append(skill)
+                
+        score = hits / len(jd_skills)
+        # Curve: 60% keyword match is usually interview-worthy
+        score = min(1.0, score * 1.6)
+        
+        return score, sorted(list(set(matched))), sorted(list(set(missing)))
 
-        return AnalysisResult(
-            score=final_score,
-            semantic_score=semantic_score,
-            keyword_score=keyword_score,
-            best_chunks=best_chunks_text,
-            missing_critical=list(set(missing_skills))[:10],
-            matched_critical=list(set(matched_skills))[:10]
-        )
+    def evaluate(self, cv_text: str, jd_text: str, lang: str) -> MatchResult:
+        # 1. Semantic (Ensemble)
+        sem_score = self.calculate_ensemble_semantic_score(cv_text, jd_text)
+        
+        # 2. Keywords (Hard Skills)
+        kw_score, matched, missing = self.calculate_keyword_score(cv_text, jd_text)
+        
+        # 3. Final Weighting
+        # If Semantic is high (you described the right experience), we care less about exact keywords.
+        if sem_score > 0.85:
+            final = sem_score
+        else:
+            final = (sem_score * 0.65) + (kw_score * 0.35)
+            
+        # Feedback Text
+        if final > 0.85: feedback = "Excellent Match"
+        elif final > 0.70: feedback = "Strong Match"
+        elif final > 0.50: feedback = "Potential Match"
+        else: feedback = "Weak Match"
+        
+        return MatchResult(final, sem_score, kw_score, matched, missing, feedback)
 
-# ==================== VIEW LAYER ====================
+# ==================== GPT LAYER ====================
+
+class GPTAnalyst:
+    def __init__(self, api_key):
+        self.client = openai.OpenAI(api_key=api_key)
+        
+    def analyze(self, cv, jd, score, missing):
+        prompt = f"""
+        Role: Expert Recruiter.
+        Candidate Score: {score*100:.1f}% (Algorithm).
+        Missing Keywords Detected: {', '.join(missing[:5])}.
+        
+        JD Snippet: {jd[:800]}
+        CV Snippet: {cv[:800]}
+        
+        Task:
+        1. Ignore the score. Does this candidate actually fit? (Yes/No).
+        2. List 2 missing hard skills that truly matter.
+        3. Suggest a 1-sentence summary to add to the CV to fix the gap.
+        """
+        try:
+            res = self.client.chat.completions.create(
+                model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}]
+            )
+            return res.choices[0].message.content
+        except: return "GPT Error"
+
+# ==================== UI CONTROLLER ====================
 
 def main():
-    # Cache the heavy model loading
-    @st.cache_resource
-    def load_engine():
-        return DeepMatchEngine()
-
-    engine = load_engine()
-
-    # Header
-    st.markdown("""
-        <style>
-        .main-header {font-size: 3rem; font-weight: 800; color: #1E88E5; text-align: center; margin-bottom: 0;}
-        .sub-header {font-size: 1.2rem; color: #666; text-align: center; margin-bottom: 2rem;}
-        .metric-box {padding: 20px; border-radius: 10px; background-color: #f0f2f6; text-align: center;}
-        .highlight {background-color: #e3f2fd; padding: 2px 5px; border-radius: 4px; font-family: monospace;}
-        </style>
-        <div class="main-header">Deep Match AI</div>
-        <div class="sub-header">Max-Pooling Semantic Engine (The "Island of Excellence" Algorithm)</div>
-    """, unsafe_allow_html=True)
-
-    col1, col2 = st.columns([1, 1])
+    st.sidebar.title("⚙️ Controls")
     
-    with col1:
-        st.subheader("1. Candidate Resume")
-        cv_file = st.file_uploader("Upload PDF/DOCX", type=['pdf', 'docx', 'txt'])
-
-    with col2:
-        st.subheader("2. Job Description")
-        jd_text = st.text_area("Paste text here...", height=150)
-
-    if st.button("Run Deep Analysis", type="primary", use_container_width=True):
+    lang_map = {"en": "English", "de": "Deutsch", "fr": "Français", "es": "Español", "it": "Italiano"}
+    sel_lang = st.sidebar.selectbox("Language", list(lang_map.keys()), format_func=lambda x: lang_map[x])
+    
+    use_gpt = st.sidebar.checkbox("Use GPT-4 Audit")
+    api_key = st.sidebar.text_input("OpenAI API Key", type="password") if use_gpt else None
+    
+    st.title("⚖️ Ensemble CV Matcher")
+    st.markdown("Runs **Global Context**, **Requirement-Specific**, and **Hard Skill** models simultaneously.")
+    
+    c1, c2 = st.columns(2)
+    cv_file = c1.file_uploader("Upload Resume", type=["pdf", "docx", "txt"])
+    jd_text = c2.text_area("Job Description", height=250)
+    
+    if st.button("Run Ensemble Analysis", type="primary"):
         if cv_file and jd_text:
-            with st.spinner("Chunking document & calculating vector gradients..."):
-                # Extraction
-                cv_text = TextProcessor.extract_text(cv_file)
+            with st.spinner("Running Ensemble Models (Semantic + Lexical + Fuzzy)..."):
                 
-                if len(cv_text) < 100:
-                    st.error("Resume content too short or unreadable.")
+                # 1. Extraction
+                cv_text = TextCleaner.extract_text(cv_file)
+                if len(cv_text) < 50:
+                    st.error("Resume unreadable.")
                     return
+                
+                # 2. Engine
+                @st.cache_resource
+                def load_engine(): return EnsembleMatcher()
+                
+                engine = load_engine()
+                res = engine.evaluate(cv_text, jd_text, sel_lang)
+                
+                # 3. GPT
+                if use_gpt and api_key:
+                    gpt = GPTAnalyst(api_key)
+                    res.ai_analysis = gpt.analyze(cv_text, jd_text, res.final_score, res.missing_skills)
 
-                # Analysis
-                result = engine.evaluate(cv_text, jd_text)
+                # === DISPLAY ===
+                st.divider()
                 
-                # === RESULTS ===
-                st.markdown("---")
+                score = res.final_score * 100
+                color = "#28a745" if score >= 70 else "#ffc107" if score >= 50 else "#dc3545"
                 
-                # 1. THE BIG SCORE
-                score_pct = result.score * 100
+                c_main, c_det = st.columns([1, 2])
                 
-                # Dynamic Color
-                if score_pct >= 85: color = "#2e7d32" # Dark Green
-                elif score_pct >= 70: color = "#1976d2" # Blue
-                elif score_pct >= 50: color = "#f57f17" # Orange
-                else: color = "#c62828" # Red
-                
-                c1, c2, c3 = st.columns([1,2,1])
-                with c2:
+                with c_main:
                     st.markdown(f"""
-                        <div style="text-align: center;">
-                            <h2 style="margin:0; color: #555;">Hiring Probability</h2>
-                            <h1 style="font-size: 5em; font-weight: 900; margin: 0; color: {color};">
-                                {score_pct:.1f}%
-                            </h1>
-                        </div>
+                    <div style="background:{color}20; padding:20px; border-radius:15px; text-align:center; border:2px solid {color}">
+                        <h4 style="margin:0; color:{color}">MATCH SCORE</h4>
+                        <h1 style="font-size:4em; margin:0; color:{color}">{score:.0f}%</h1>
+                        <h3 style="margin:0; color:#555">{res.feedback}</h3>
+                    </div>
                     """, unsafe_allow_html=True)
-
-                # 2. METRICS
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Context Match", f"{result.semantic_score*100:.1f}%", 
-                          help="How well your best paragraphs matched the JD meaning.")
-                m2.metric("Keyword Hit Rate", f"{result.keyword_score*100:.1f}%", 
-                          help="Percentage of capitalized hard skills found.")
-                m3.metric("Analysis Mode", "Max-Pooling", 
-                          help="We ignored the weak parts of your CV and scored the best parts.")
-
-                # 3. VISUAL PROOF (Why did I get this score?)
-                st.subheader("🔍 Why you got this score")
                 
-                tab1, tab2, tab3 = st.tabs(["🏆 Your Best Matches", "✅ Skills Found", "⚠️ Missing Skills"])
+                with c_det:
+                    st.subheader("📊 Signal Breakdown")
+                    m1, m2 = st.columns(2)
+                    m1.metric("Semantic Fit", f"{res.semantic_score*100:.0f}%", 
+                             help="How well you matched the Requirements paragraph (ignoring JD fluff).")
+                    m2.metric("Skill Match", f"{res.keyword_score*100:.0f}%", 
+                             help="How many Capitalized Skills (Java, Sales) you matched.")
+                    
+                    st.progress(res.final_score, text="Aggregate Confidence")
+
+                st.divider()
+                st.subheader("🔍 Skill Gap Analysis")
                 
-                with tab1:
-                    st.success("The AI found these specific paragraphs in your CV that strongly match the Job Description:")
-                    for i, chunk in enumerate(result.best_chunks):
-                        st.markdown(f"**Match #{i+1}:** _{chunk}_")
-                        st.divider()
+                t1, t2 = st.tabs(["✅ Matched Skills", "⚠️ Missing / Mismatched"])
+                with t1:
+                    if res.matched_skills:
+                        st.markdown(" ".join([f"`{s}`" for s in res.matched_skills]))
+                    else: st.info("No exact hard skills found (Relied purely on context).")
+                with t2:
+                    if res.missing_skills:
+                        st.write("The JD specifically mentions these capitalized terms, but we didn't find them in your CV:")
+                        st.markdown(" ".join([f"`{s}`" for s in res.missing_skills]))
+                    else: st.success("Clean sweep! No obvious skills missing.")
 
-                with tab2:
-                    if result.matched_critical:
-                        st.write("We detected these specific hard skills from the JD in your text:")
-                        st.markdown(" ".join([f"<span class='highlight'>{s}</span>" for s in result.matched_critical]), unsafe_allow_html=True)
-                    else:
-                        st.warning("No specific proper nouns (Skills) matched exactly.")
-
-                with tab3:
-                    if result.missing_critical:
-                        st.write("The Job Description emphasizes these skills, but we couldn't find them clearly in your CV:")
-                        st.error("  •  ".join(result.missing_critical))
-                        st.caption("Tip: If you possess these skills, ensure they are capitalized and spelled exactly as above.")
-                    else:
-                        st.success("You have excellent keyword coverage!")
+                if res.ai_analysis:
+                    st.divider()
+                    st.subheader("🤖 GPT-4 Audit")
+                    st.success(res.ai_analysis)
 
         else:
-            st.info("Please provide both a Resume and a Job Description to start.")
+            st.warning("Upload files to start.")
 
 if __name__ == "__main__":
     main()
