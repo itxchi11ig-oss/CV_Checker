@@ -145,6 +145,70 @@ TRANSLATIONS = {
     }
 }
 
+# Moved Global Feedback Templates to avoid Indentation Errors
+FEEDBACK_TEMPLATES = {
+    Language.ENGLISH: {
+        "excellent": "Excellent match! Your CV aligns very well with the job requirements.",
+        "good": "Good match. Your CV shows relevant experience with room for improvement.",
+        "moderate": "Moderate match. Consider tailoring your CV more specifically to this role.",
+        "low": "Low match. Your CV may not align well with this position's requirements.",
+        "relevance_high": "Strong semantic alignment with job description.",
+        "relevance_medium": "Moderate alignment. Consider using similar terminology from the job posting.",
+        "relevance_low": "Weak alignment. Restructure your CV to better reflect job requirements.",
+        "keywords_high": "Good keyword coverage from the job description.",
+        "keywords_medium": "Moderate keyword presence. Add more relevant skills and terms.",
+        "keywords_low": "Low keyword match. Include more specific skills mentioned in the job posting."
+    },
+    Language.GERMAN: {
+        "excellent": "Ausgezeichnete Übereinstimmung! Ihr Lebenslauf entspricht sehr gut den Anforderungen.",
+        "good": "Gute Übereinstimmung. Ihr Lebenslauf zeigt relevante Erfahrung mit Verbesserungspotenzial.",
+        "moderate": "Mittlere Übereinstimmung. Passen Sie Ihren Lebenslauf gezielter an diese Rolle an.",
+        "low": "Geringe Übereinstimmung. Ihr Lebenslauf passt möglicherweise nicht gut zu dieser Position.",
+        "relevance_high": "Starke semantische Übereinstimmung mit der Stellenbeschreibung.",
+        "relevance_medium": "Mittlere Übereinstimmung. Verwenden Sie ähnliche Begriffe aus der Stellenausschreibung.",
+        "relevance_low": "Schwache Übereinstimmung. Strukturieren Sie Ihren Lebenslauf neu.",
+        "keywords_high": "Gute Schlüsselwort-Abdeckung aus der Stellenbeschreibung.",
+        "keywords_medium": "Mittlere Schlüsselwort-Präsenz. Fügen Sie mehr relevante Begriffe hinzu.",
+        "keywords_low": "Geringe Schlüsselwort-Übereinstimmung. Fügen Sie spezifische Fähigkeiten hinzu."
+    },
+    Language.FRENCH: {
+        "excellent": "Excellente correspondance! Votre CV correspond très bien aux exigences du poste.",
+        "good": "Bonne correspondance. Votre CV montre une expérience pertinente avec des améliorations possibles.",
+        "moderate": "Correspondance modérée. Adaptez votre CV plus spécifiquement à ce rôle.",
+        "low": "Faible correspondance. Votre CV ne correspond peut-être pas bien à ce poste.",
+        "relevance_high": "Forte alignement sémantique avec la description du poste.",
+        "relevance_medium": "Alignement modéré. Utilisez une terminologie similaire de l'offre d'emploi.",
+        "relevance_low": "Faible alignement. Restructurez votre CV pour mieux refléter les exigences.",
+        "keywords_high": "Bonne couverture des mots-clés de la description du poste.",
+        "keywords_medium": "Présence modérée de mots-clés. Ajoutez plus de termes pertinents.",
+        "keywords_low": "Faible correspondance de mots-clés. Incluez plus de compétences spécifiques."
+    },
+    Language.SPANISH: {
+        "excellent": "¡Excelente coincidencia! Tu CV se alinea muy bien con los requisitos del trabajo.",
+        "good": "Buena coincidencia. Tu CV muestra experiencia relevante con margen de mejora.",
+        "moderate": "Coincidencia moderada. Considera adaptar tu CV más específicamente a este rol.",
+        "low": "Baja coincidencia. Tu CV puede no alinearse bien con los requisitos de esta posición.",
+        "relevance_high": "Fuerte alineación semántica con la descripción del trabajo.",
+        "relevance_medium": "Alineación moderada. Considera usar terminología similar de la oferta de trabajo.",
+        "relevance_low": "Alineación débil. Reestructura tu CV para reflejar mejor los requisitos.",
+        "keywords_high": "Buena cobertura de palabras clave de la descripción del trabajo.",
+        "keywords_medium": "Presencia moderada de palabras clave. Añade más términos relevantes.",
+        "keywords_low": "Baja coincidencia de palabras clave. Incluye más habilidades específicas."
+    },
+    Language.ITALIAN: {
+        "excellent": "Corrispondenza eccellente! Il tuo CV si allinea molto bene con i requisiti del lavoro.",
+        "good": "Buona corrispondenza. Il tuo CV mostra esperienza rilevante con margine di miglioramento.",
+        "moderate": "Corrispondenza moderata. Considera di adattare il tuo CV più specificamente a questo ruolo.",
+        "low": "Bassa corrispondenza. Il tuo CV potrebbe non allinearsi bene con i requisiti di questa posizione.",
+        "relevance_high": "Forte allineamento semantico con la descrizione del lavoro.",
+        "relevance_medium": "Allineamento moderato. Considera l'uso di terminologia simile dall'offerta di lavoro.",
+        "relevance_low": "Allineamento debole. Ristruttura il tuo CV per riflettere meglio i requisiti.",
+        "keywords_high": "Buona copertura di parole chiave dalla descrizione del lavoro.",
+        "keywords_medium": "Presenza moderata di parole chiave. Aggiungi più termini rilevanti.",
+        "keywords_low": "Bassa corrispondenza di parole chiave. Includi più competenze specifiche."
+    }
+}
+
 # ==================== MODEL LAYER ====================
 
 @dataclass
@@ -317,71 +381,11 @@ class CVEvaluator:
         
         if not isinstance(language, Language):
             language = Language.ENGLISH
+            
+        # Access the GLOBAL constant (safe from nesting errors)
+        # Use English as default fallback if language key is missing
+        templates = FEEDBACK_TEMPLATES.get(language, FEEDBACK_TEMPLATES[Language.ENGLISH])
         
-        feedback_templates = {
-            Language.ENGLISH: {
-                "excellent": "Excellent match! Your CV aligns very well with the job requirements.",
-                "good": "Good match. Your CV shows relevant experience with room for improvement.",
-                "moderate": "Moderate match. Consider tailoring your CV more specifically to this role.",
-                "low": "Low match. Your CV may not align well with this position's requirements.",
-                "relevance_high": "Strong semantic alignment with job description.",
-                "relevance_medium": "Moderate alignment. Consider using similar terminology from the job posting.",
-                "relevance_low": "Weak alignment. Restructure your CV to better reflect job requirements.",
-                "keywords_high": "Good keyword coverage from the job description.",
-                "keywords_medium": "Moderate keyword presence. Add more relevant skills and terms.",
-                "keywords_low": "Low keyword match. Include more specific skills mentioned in the job posting."
-            },
-            Language.GERMAN: {
-                "excellent": "Ausgezeichnete Übereinstimmung! Ihr Lebenslauf entspricht sehr gut den Anforderungen.",
-                "good": "Gute Übereinstimmung. Ihr Lebenslauf zeigt relevante Erfahrung mit Verbesserungspotenzial.",
-                "moderate": "Mittlere Übereinstimmung. Passen Sie Ihren Lebenslauf gezielter an diese Rolle an.",
-                "low": "Geringe Übereinstimmung. Ihr Lebenslauf passt möglicherweise nicht gut zu dieser Position.",
-                "relevance_high": "Starke semantische Übereinstimmung mit der Stellenbeschreibung.",
-                "relevance_medium": "Mittlere Übereinstimmung. Verwenden Sie ähnliche Begriffe aus der Stellenausschreibung.",
-                "relevance_low": "Schwache Übereinstimmung. Strukturieren Sie Ihren Lebenslauf neu.",
-                "keywords_high": "Gute Schlüsselwort-Abdeckung aus der Stellenbeschreibung.",
-                "keywords_medium": "Mittlere Schlüsselwort-Präsenz. Fügen Sie mehr relevante Begriffe hinzu.",
-                "keywords_low": "Geringe Schlüsselwort-Übereinstimmung. Fügen Sie spezifische Fähigkeiten hinzu."
-            },
-            Language.FRENCH: {
-                "excellent": "Excellente correspondance! Votre CV correspond très bien aux exigences du poste.",
-                "good": "Bonne correspondance. Votre CV montre une expérience pertinente avec des améliorations possibles.",
-                "moderate": "Correspondance modérée. Adaptez votre CV plus spécifiquement à ce rôle.",
-                "low": "Faible correspondance. Votre CV ne correspond peut-être pas bien à ce poste.",
-                "relevance_high": "Forte alignement sémantique avec la description du poste.",
-                "relevance_medium": "Alignement modéré. Utilisez une terminologie similaire de l'offre d'emploi.",
-                "relevance_low": "Faible alignement. Restructurez votre CV pour mieux refléter les exigences.",
-                "keywords_high": "Bonne couverture des mots-clés de la description du poste.",
-                "keywords_medium": "Présence modérée de mots-clés. Ajoutez plus de termes pertinents.",
-                "keywords_low": "Faible correspondance de mots-clés. Incluez plus de compétences spécifiques."
-            },
-            Language.SPANISH: {
-                "excellent": "¡Excelente coincidencia! Tu CV se alinea muy bien con los requisitos del trabajo.",
-                "good": "Buena coincidencia. Tu CV muestra experiencia relevante con margen de mejora.",
-                "moderate": "Coincidencia moderada. Considera adaptar tu CV más específicamente a este rol.",
-                "low": "Baja coincidencia. Tu CV puede no alinearse bien con los requisitos de esta posición.",
-                "relevance_high": "Fuerte alineación semántica con la descripción del trabajo.",
-                "relevance_medium": "Alineación moderada. Considera usar terminología similar de la oferta de trabajo.",
-                "relevance_low": "Alineación débil. Reestructura tu CV para reflejar mejor los requisitos.",
-                "keywords_high": "Buena cobertura de palabras clave de la descripción del trabajo.",
-                "keywords_medium": "Presencia moderada de palabras clave. Añade más términos relevantes.",
-                "keywords_low": "Baja coincidencia de palabras clave. Incluye más habilidades específicas."
-            },
-            Language.ITALIAN: {
-                "excellent": "Corrispondenza eccellente! Il tuo CV si allinea molto bene con i requisiti del lavoro.",
-                "good": "Buona corrispondenza. Il tuo CV mostra esperienza rilevante con margine di miglioramento.",
-                "moderate": "Corrispondenza moderata. Considera di adattare il tuo CV più specificamente a questo ruolo.",
-                "low": "Bassa corrispondenza. Il tuo CV potrebbe non allinearsi bene con i requisiti di questa posizione.",
-                "relevance_high": "Forte allineamento semantico con la descrizione del lavoro.",
-                "relevance_medium": "Allineamento moderato. Considera l'uso di terminologia simile dall'offerta di lavoro.",
-                "relevance_low": "Allineamento debole. Ristruttura il tuo CV per riflettere meglio i requisiti.",
-                "keywords_high": "Buona copertura di parole chiave dalla descrizione del lavoro.",
-                "keywords_medium": "Presenza moderata di parole chiave. Aggiungi più termini rilevanti.",
-                "keywords_low": "Bassa corrispondenza di parole chiave. Includi più competenze specifiche."
-            }
-        }
-        
-        templates = feedback_templates.get(language, feedback_templates[Language.ENGLISH])
         feedback = {}
         
         if overall >= 0.75:
