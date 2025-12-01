@@ -309,6 +309,16 @@ class CVEvaluator:
                           keyword: float, language: Language) -> Dict[str, str]:
         """Generate human-readable feedback in selected language"""
         
+        # Ensure language is proper enum
+        if isinstance(language, str):
+            try:
+                language = Language(language)
+            except (ValueError, KeyError):
+                language = Language.ENGLISH
+        
+        if not isinstance(language, Language):
+            language = Language.ENGLISH
+        
         feedback_templates = {
             Language.ENGLISH: {
                 "excellent": "Excellent match! Your CV aligns very well with the job requirements.",
@@ -419,6 +429,16 @@ class CVEvaluationController:
                           language: Language, api_key: Optional[str] = None,
                           use_gpt: bool = False) -> EvaluationResult:
         """Process complete evaluation workflow"""
+        
+        # Ensure language is proper enum
+        if isinstance(language, str):
+            try:
+                language = Language(language)
+            except (ValueError, KeyError):
+                language = Language.ENGLISH
+        
+        if not isinstance(language, Language):
+            language = Language.ENGLISH
         
         if self.evaluator is None:
             self.evaluator = self.load_model()
@@ -625,12 +645,19 @@ def main():
         else:
             with st.spinner(get_text("analyzing", language)):
                 try:
+                    # Ensure language is proper enum
+                    eval_language = language
+                    if isinstance(eval_language, str):
+                        eval_language = Language(eval_language)
+                    
                     result = controller.process_evaluation(
-                        cv_file, job_description, language, api_key, use_gpt
+                        cv_file, job_description, eval_language, api_key, use_gpt
                     )
-                    render_results(result, language)
+                    render_results(result, eval_language)
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
+                    import traceback
+                    st.error(traceback.format_exc())
     
     st.markdown("---")
     st.markdown("*Powered by Sentence Transformers & GPT-4*")
