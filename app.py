@@ -146,13 +146,6 @@ TRANSLATIONS = {
     }
 }
 
-LANGUAGE_MAP = {
-    Language.ENGLISH: "en",
-    Language.GERMAN: "de",
-    Language.SPANISH: "es"
-}
-
-
 # ==================== MODEL LAYER ====================
 
 @dataclass
@@ -448,96 +441,46 @@ class CVEvaluationController:
 
 # ==================== VIEW LAYER (Streamlit UI) ====================
 
-def get_text(key: str, language_code) -> str:
-    """
-    Holt übersetzten Text. Funktioniert mit Strings ('en', 'de', 'es') UND mit Language-Enum.
-    Verhindert zuverlässig KeyError und fällt sauber auf Englisch zurück.
-    """
-
-    # Falls ein Enum übergeben wird → in Sprachcode umwandeln
-    try:
-        if isinstance(language_code, Language):
-            language_map = {
-                Language.ENGLISH: "en",
-                Language.GERMAN: "de",
-                Language.SPANISH: "es",
-            }
-            language_code = language_map.get(language_code, "en")
-    except Exception:
-        language_code = "en"
-
-    # Falls kein String → fallback
-    if not isinstance(language_code, str):
-        language_code = "en"
-
-    # Sicherer Zugriff ohne KeyError
-    translations = TRANSLATIONS.get(language_code)
-
-    if not isinstance(translations, dict):
-        # Fallback, falls Sprachcode nicht existiert
-        return key
-
-    return translations.get(key, key)
-
-
+def get_text(key: str, language: str) -> str:
+    if language not in TRANSLATIONS:
+        language = "en"  # fallback
+    return TRANSLATIONS[language].get(key, key)
 
 def render_sidebar(language: Language):
     """Render sidebar with settings"""
-
-    # Enum → Code
-    ENUM_TO_CODE = {
-        Language.ENGLISH: "en",
-        Language.GERMAN: "de",
-        Language.SPANISH: "es",
-    }
-
-    # Label → Enum
-    DISPLAY_TO_ENUM = {
-        "English": Language.ENGLISH,
-        "Deutsch": Language.GERMAN,
-        "Español": Language.SPANISH,
-    }
-
-    # Falls language keinen gültigen Wert hat → fallback
-    if language not in ENUM_TO_CODE:
-        language = Language.ENGLISH
-
-    lang_code = ENUM_TO_CODE[language]
-
     st.sidebar.title("⚙️ Settings")
-
-    # LANGUAGE SELECT
-    labels = list(DISPLAY_TO_ENUM.keys())
-    enums  = list(DISPLAY_TO_ENUM.values())
-
-    try:
-        index = enums.index(language)
-    except ValueError:
-        index = 0
-
-    selected_label = st.sidebar.selectbox(
-        get_text("language_label", lang_code),
-        options=labels,
-        index=index
+    
+    selected_lang = st.sidebar.selectbox(
+        get_text("language_label", language),
+        options=[
+            ("English", Language.ENGLISH),
+            ("Deutsch", Language.GERMAN),
+            ("Français", Language.FRENCH),
+            ("Español", Language.SPANISH),
+            ("Italiano", Language.ITALIAN)
+        ],
+        format_func=lambda x: x[0],
+        index=[Language.ENGLISH, Language.GERMAN, Language.FRENCH, 
+               Language.SPANISH, Language.ITALIAN].index(language)
     )
-
-    selected_language = DISPLAY_TO_ENUM[selected_label]
-
-    # GPT Toggle
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader(get_text("model_selection", language))
+    
     use_gpt = st.sidebar.checkbox(
-        get_text("use_gpt", lang_code),
+        get_text("use_gpt", language),
         value=False
     )
-
-    # API KEY
-    api_key = st.sidebar.text_input(
-        get_text("api_key", lang_code),
-        type="password"
-    )
-
-    return selected_language, use_gpt, api_key
-
-
+    
+    api_key = None
+    if use_gpt:
+        api_key = st.sidebar.text_input(
+            get_text("api_key_label", language),
+            type="password",
+            help=get_text("api_key_help", language)
+        )
+    
+    return selected_lang[1], use_gpt, api_key
 
 def render_header(language: Language):
     """Render application header"""
@@ -622,75 +565,44 @@ def render_results(result: EvaluationResult, language: Language):
             st.write("-")
 
 def main():
-    st.set_page_config(page_title="CV Checker", layout="wide")
-
-    # --- Session State Setup ---
-    # Sprache sicher initialisieren
-    if "language" not in st.session_state:
-        st.session_state.language = Language.ENGLISH
-
-    # --- Sidebar Rendern ---
-    selected_language, use_gpt, api_key = render_sidebar(st.session_state.language)
-
-    # Enum speichern, NIE einen String
-    st.session_state.language = selected_language
-
-    # --- Sprachcode (en/de/es) bestimmen ---
-    LANGUAGE_MAP = {
-        Language.ENGLISH: "en",
-        Language.GERMAN: "de",
-        Language.SPANISH: "es",
-    }
-    lang_code = LANGUAGE_MAP[st.session_state.language]
-
-    st.title(get_text("app_title", lang_code))
-
-    st.write(get_text("instructions", lang_code))
-
-    # --- Upload-Bereich ---
-    uploaded_files = st.file_uploader(
-        get_text("upload_label", lang_code),
-        accept_multiple_files=True,
-        type=["pdf", "docx"]
+    """Main application entry point"""
+    st.set_page_config(
+        page_title="CV Evaluator",
+        page_icon="🎯",
+        layout="wide",
+        initial_sidebar_state="expanded"
     )
-
-    if not uploaded_files:
-        st.info(get_text("upload_hint", lang_code))
-        return
-
-    # Dokumente extrahieren
-    docs = []
-    for file in uploaded_files:
-        if file.name.lower().endswith(".pdf"):
-            text = extract_from_pdf(file)
-        elif file.name.lower().endswith(".docx"):
-            text = extract_from_docx(file)
+    
+    if 'language' not in st.session_state:
+        st.session_state.language = Language.ENGLISH
+    
+    language, use_gpt, api_key = render_sidebar(st.session_state.language)
+    st.session_state.language = language
+    
+    controller = CVEvaluationController()
+    
+    render_header(language)
+    cv_file, job_description = render_input_section(language)
+    
+    if st.button(get_text("evaluate_btn", language), type="primary", use_container_width=True):
+        if cv_file is None:
+            st.error(get_text("error_no_cv", language))
+        elif not job_description.strip():
+            st.error(get_text("error_no_job", language))
+        elif use_gpt and not api_key:
+            st.error(get_text("error_no_api", language))
         else:
-            st.error(get_text("unsupported_file", lang_code))
-            return
-
-        docs.append((file.name, text))
-
-    # Modell initialisieren (mit Cache)
-    model = load_model()
-
-    # Button zum Starten der Analyse
-    if st.button(get_text("analyze_button", lang_code), type="primary"):
-
-        results = []
-        for name, content in docs:
-            result = evaluate_document(content, model, use_gpt, api_key, lang_code)
-            results.append((name, result))
-
-        # Ausgabe
-        st.subheader(get_text("results_title", lang_code))
-
-        for name, result in results:
-            st.markdown(f"### 📄 {name}")
-            st.write(result)
-
+            with st.spinner(get_text("analyzing", language)):
+                try:
+                    result = controller.process_evaluation(
+                        cv_file, job_description, language, api_key, use_gpt
+                    )
+                    render_results(result, language)
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    
+    st.markdown("---")
     st.markdown("*Powered by Sentence Transformers & GPT-4*")
-
 
 if __name__ == "__main__":
     main()
