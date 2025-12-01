@@ -443,8 +443,17 @@ class CVEvaluationController:
 
 def get_text(key: str, language: Language) -> str:
     """Get translated text"""
+    # Handle if language is a string
+    if isinstance(language, str):
+        try:
+            language = Language(language)
+        except (ValueError, KeyError):
+            language = Language.ENGLISH
+    
+    # Handle if language is not a Language enum
     if not isinstance(language, Language):
         language = Language.ENGLISH
+    
     return TRANSLATIONS[language].get(key, key)
 
 def render_sidebar(language: Language):
@@ -583,10 +592,22 @@ def main():
         initial_sidebar_state="expanded"
     )
     
+    # Initialize language with proper handling
     if 'language' not in st.session_state:
         st.session_state.language = Language.ENGLISH
     
-    language, use_gpt, api_key = render_sidebar(st.session_state.language)
+    # Ensure language is always a Language enum
+    current_lang = st.session_state.language
+    if isinstance(current_lang, str):
+        # Convert string to enum if needed
+        try:
+            current_lang = Language(current_lang)
+        except (ValueError, KeyError):
+            current_lang = Language.ENGLISH
+    elif not isinstance(current_lang, Language):
+        current_lang = Language.ENGLISH
+    
+    language, use_gpt, api_key = render_sidebar(current_lang)
     st.session_state.language = language
     
     controller = CVEvaluationController()
