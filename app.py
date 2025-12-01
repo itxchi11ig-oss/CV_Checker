@@ -17,8 +17,21 @@ class Language(Enum):
     SPANISH = "es"
     ITALIAN = "it"
 
+# Helper to safely get language code (prevents Streamlit Stale Enum errors)
+def get_language_code(lang) -> str:
+    if isinstance(lang, Language):
+        return lang.value
+    if isinstance(lang, str):
+        return lang
+    # Handle stale enums from Streamlit cache
+    try:
+        return lang.value
+    except AttributeError:
+        return "en"
+
+# Use STRINGS as keys to prevent Enum identity errors
 TRANSLATIONS = {
-    Language.ENGLISH: {
+    "en": {
         "title": "🎯 AI-Powered CV Evaluator",
         "description": "Upload your CV and paste the job description to get an AI-powered evaluation of how well your CV matches the position requirements.",
         "upload_cv": "📄 Upload Your CV",
@@ -43,7 +56,7 @@ TRANSLATIONS = {
         "model_selection": "Evaluation Model",
         "use_gpt": "Use GPT-4 for detailed suggestions",
     },
-    Language.GERMAN: {
+    "de": {
         "title": "🎯 KI-gestützte Lebenslauf-Bewertung",
         "description": "Laden Sie Ihren Lebenslauf hoch und fügen Sie die Stellenbeschreibung ein, um eine KI-gestützte Bewertung zu erhalten.",
         "upload_cv": "📄 Lebenslauf hochladen",
@@ -68,7 +81,7 @@ TRANSLATIONS = {
         "model_selection": "Bewertungsmodell",
         "use_gpt": "GPT-4 für detaillierte Vorschläge verwenden",
     },
-    Language.FRENCH: {
+    "fr": {
         "title": "🎯 Évaluateur de CV alimenté par l'IA",
         "description": "Téléchargez votre CV et collez la description du poste pour obtenir une évaluation alimentée par l'IA.",
         "upload_cv": "📄 Télécharger votre CV",
@@ -93,7 +106,7 @@ TRANSLATIONS = {
         "model_selection": "Modèle d'évaluation",
         "use_gpt": "Utiliser GPT-4 pour des suggestions détaillées",
     },
-    Language.SPANISH: {
+    "es": {
         "title": "🎯 Evaluador de CV con IA",
         "description": "Sube tu CV y pega la descripción del trabajo para obtener una evaluación impulsada por IA.",
         "upload_cv": "📄 Subir tu CV",
@@ -118,7 +131,7 @@ TRANSLATIONS = {
         "model_selection": "Modelo de evaluación",
         "use_gpt": "Usar GPT-4 para sugerencias detalladas",
     },
-    Language.ITALIAN: {
+    "it": {
         "title": "🎯 Valutatore CV alimentato dall'IA",
         "description": "Carica il tuo CV e incolla la descrizione del lavoro per ottenere una valutazione alimentata dall'IA.",
         "upload_cv": "📄 Carica il tuo CV",
@@ -145,9 +158,8 @@ TRANSLATIONS = {
     }
 }
 
-# Moved Global Feedback Templates to avoid Indentation Errors
 FEEDBACK_TEMPLATES = {
-    Language.ENGLISH: {
+    "en": {
         "excellent": "Excellent match! Your CV aligns very well with the job requirements.",
         "good": "Good match. Your CV shows relevant experience with room for improvement.",
         "moderate": "Moderate match. Consider tailoring your CV more specifically to this role.",
@@ -159,7 +171,7 @@ FEEDBACK_TEMPLATES = {
         "keywords_medium": "Moderate keyword presence. Add more relevant skills and terms.",
         "keywords_low": "Low keyword match. Include more specific skills mentioned in the job posting."
     },
-    Language.GERMAN: {
+    "de": {
         "excellent": "Ausgezeichnete Übereinstimmung! Ihr Lebenslauf entspricht sehr gut den Anforderungen.",
         "good": "Gute Übereinstimmung. Ihr Lebenslauf zeigt relevante Erfahrung mit Verbesserungspotenzial.",
         "moderate": "Mittlere Übereinstimmung. Passen Sie Ihren Lebenslauf gezielter an diese Rolle an.",
@@ -171,7 +183,7 @@ FEEDBACK_TEMPLATES = {
         "keywords_medium": "Mittlere Schlüsselwort-Präsenz. Fügen Sie mehr relevante Begriffe hinzu.",
         "keywords_low": "Geringe Schlüsselwort-Übereinstimmung. Fügen Sie spezifische Fähigkeiten hinzu."
     },
-    Language.FRENCH: {
+    "fr": {
         "excellent": "Excellente correspondance! Votre CV correspond très bien aux exigences du poste.",
         "good": "Bonne correspondance. Votre CV montre une expérience pertinente avec des améliorations possibles.",
         "moderate": "Correspondance modérée. Adaptez votre CV plus spécifiquement à ce rôle.",
@@ -183,7 +195,7 @@ FEEDBACK_TEMPLATES = {
         "keywords_medium": "Présence modérée de mots-clés. Ajoutez plus de termes pertinents.",
         "keywords_low": "Faible correspondance de mots-clés. Incluez plus de compétences spécifiques."
     },
-    Language.SPANISH: {
+    "es": {
         "excellent": "¡Excelente coincidencia! Tu CV se alinea muy bien con los requisitos del trabajo.",
         "good": "Buena coincidencia. Tu CV muestra experiencia relevante con margen de mejora.",
         "moderate": "Coincidencia moderada. Considera adaptar tu CV más específicamente a este rol.",
@@ -195,7 +207,7 @@ FEEDBACK_TEMPLATES = {
         "keywords_medium": "Presencia moderada de palabras clave. Añade más términos relevantes.",
         "keywords_low": "Baja coincidencia de palabras clave. Incluye más habilidades específicas."
     },
-    Language.ITALIAN: {
+    "it": {
         "excellent": "Corrispondenza eccellente! Il tuo CV si allinea molto bene con i requisiti del lavoro.",
         "good": "Buona corrispondenza. Il tuo CV mostra esperienza rilevante con margine di miglioramento.",
         "moderate": "Corrispondenza moderata. Considera di adattare il tuo CV più specificamente a questo ruolo.",
@@ -265,12 +277,15 @@ class GPTEvaluator:
         """Get detailed AI-powered suggestions using GPT-4"""
         
         language_prompts = {
-            Language.ENGLISH: "English",
-            Language.GERMAN: "German",
-            Language.FRENCH: "French",
-            Language.SPANISH: "Spanish",
-            Language.ITALIAN: "Italian"
+            "en": "English",
+            "de": "German",
+            "fr": "French",
+            "es": "Spanish",
+            "it": "Italian"
         }
+        
+        lang_code = get_language_code(self.language)
+        lang_name = language_prompts.get(lang_code, "English")
         
         prompt = f"""You are an expert career advisor. Analyze the following CV against the job description and provide specific, actionable suggestions for improvement.
 
@@ -294,13 +309,13 @@ Please provide:
 3. Recommended CV structure changes
 4. Any red flags or gaps to address
 
-Respond in {language_prompts[self.language]} language. Keep it concise and actionable."""
+Respond in {lang_name} language. Keep it concise and actionable."""
 
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": f"You are a professional career advisor providing feedback in {language_prompts[self.language]}."},
+                    {"role": "system", "content": f"You are a professional career advisor providing feedback in {lang_name}."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=800,
@@ -372,19 +387,11 @@ class CVEvaluator:
                           keyword: float, language: Language) -> Dict[str, str]:
         """Generate human-readable feedback in selected language"""
         
-        # Ensure language is proper enum
-        if isinstance(language, str):
-            try:
-                language = Language(language)
-            except (ValueError, KeyError):
-                language = Language.ENGLISH
-        
-        if not isinstance(language, Language):
-            language = Language.ENGLISH
+        # Convert language to string code safely
+        lang_code = get_language_code(language)
             
-        # Access the GLOBAL constant (safe from nesting errors)
-        # Use English as default fallback if language key is missing
-        templates = FEEDBACK_TEMPLATES.get(language, FEEDBACK_TEMPLATES[Language.ENGLISH])
+        # Access the GLOBAL constant using string key
+        templates = FEEDBACK_TEMPLATES.get(lang_code, FEEDBACK_TEMPLATES["en"])
         
         feedback = {}
         
@@ -433,16 +440,6 @@ class CVEvaluationController:
                           use_gpt: bool = False) -> EvaluationResult:
         """Process complete evaluation workflow"""
         
-        # Ensure language is proper enum
-        if isinstance(language, str):
-            try:
-                language = Language(language)
-            except (ValueError, KeyError):
-                language = Language.ENGLISH
-        
-        if not isinstance(language, Language):
-            language = Language.ENGLISH
-        
         if self.evaluator is None:
             self.evaluator = self.load_model()
         
@@ -451,7 +448,11 @@ class CVEvaluationController:
         
         if use_gpt and api_key:
             try:
-                if self.gpt_evaluator is None or self.gpt_evaluator.language != language:
+                # Check safe language comparison using values
+                current_lang_val = get_language_code(language)
+                cached_lang_val = get_language_code(self.gpt_evaluator.language) if self.gpt_evaluator else None
+                
+                if self.gpt_evaluator is None or cached_lang_val != current_lang_val:
                     self.gpt_evaluator = GPTEvaluator(api_key, language)
                 
                 result.ai_suggestions = self.gpt_evaluator.get_detailed_suggestions(
@@ -466,24 +467,14 @@ class CVEvaluationController:
 
 def get_text(key: str, language: Language) -> str:
     """Get translated text"""
-    # Handle if language is a string
-    if isinstance(language, str):
-        try:
-            language = Language(language)
-        except (ValueError, KeyError):
-            language = Language.ENGLISH
-    
-    # Handle if language is not a Language enum
-    if not isinstance(language, Language):
-        language = Language.ENGLISH
-    
-    return TRANSLATIONS[language].get(key, key)
+    lang_code = get_language_code(language)
+    return TRANSLATIONS.get(lang_code, TRANSLATIONS["en"]).get(key, key)
 
 def render_sidebar(language: Language):
     """Render sidebar with settings"""
     st.sidebar.title("⚙️ Settings")
     
-    # Language options with proper indexing
+    # Language options
     lang_options = [
         ("English", Language.ENGLISH),
         ("Deutsch", Language.GERMAN),
@@ -492,10 +483,12 @@ def render_sidebar(language: Language):
         ("Italiano", Language.ITALIAN)
     ]
     
-    # Find current language index
+    # Safely find current index by comparing values
+    current_code = get_language_code(language)
     current_index = 0
+    
     for i, (_, lang) in enumerate(lang_options):
-        if lang == language:
+        if lang.value == current_code:
             current_index = i
             break
     
@@ -615,20 +608,12 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Initialize language with proper handling
+    # Initialize language safely
     if 'language' not in st.session_state:
         st.session_state.language = Language.ENGLISH
     
-    # Ensure language is always a Language enum
+    # Safely recover language from session state
     current_lang = st.session_state.language
-    if isinstance(current_lang, str):
-        # Convert string to enum if needed
-        try:
-            current_lang = Language(current_lang)
-        except (ValueError, KeyError):
-            current_lang = Language.ENGLISH
-    elif not isinstance(current_lang, Language):
-        current_lang = Language.ENGLISH
     
     language, use_gpt, api_key = render_sidebar(current_lang)
     st.session_state.language = language
@@ -648,15 +633,10 @@ def main():
         else:
             with st.spinner(get_text("analyzing", language)):
                 try:
-                    # Ensure language is proper enum
-                    eval_language = language
-                    if isinstance(eval_language, str):
-                        eval_language = Language(eval_language)
-                    
                     result = controller.process_evaluation(
-                        cv_file, job_description, eval_language, api_key, use_gpt
+                        cv_file, job_description, language, api_key, use_gpt
                     )
-                    render_results(result, eval_language)
+                    render_results(result, language)
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
                     import traceback
