@@ -448,57 +448,88 @@ class CVEvaluationController:
 
 # ==================== VIEW LAYER (Streamlit UI) ====================
 
-def get_text(key: str, language_code: str) -> str:
-    if language_code not in TRANSLATIONS:
+def get_text(key: str, language_code) -> str:
+    """
+    Holt übersetzten Text. Funktioniert mit Strings ('en', 'de', 'es') UND mit Language-Enum.
+    Verhindert zuverlässig KeyError und fällt sauber auf Englisch zurück.
+    """
+
+    # Falls ein Enum übergeben wird → in Sprachcode umwandeln
+    try:
+        if isinstance(language_code, Language):
+            language_map = {
+                Language.ENGLISH: "en",
+                Language.GERMAN: "de",
+                Language.SPANISH: "es",
+            }
+            language_code = language_map.get(language_code, "en")
+    except Exception:
         language_code = "en"
-    return TRANSLATIONS[language_code].get(key, key)
+
+    # Falls kein String → fallback
+    if not isinstance(language_code, str):
+        language_code = "en"
+
+    # Sicherer Zugriff ohne KeyError
+    translations = TRANSLATIONS.get(language_code)
+
+    if not isinstance(translations, dict):
+        # Fallback, falls Sprachcode nicht existiert
+        return key
+
+    return translations.get(key, key)
+
 
 
 def render_sidebar(language: Language):
-    """Render settings sidebar and return selected language, GPT toggle, API key"""
+    """Render sidebar with settings"""
 
-    # Enum → translation code ("en"/"de"/"es")
-    LANGUAGE_MAP = {
+    # Enum → Code
+    ENUM_TO_CODE = {
         Language.ENGLISH: "en",
         Language.GERMAN: "de",
         Language.SPANISH: "es",
     }
 
-    # Display label → Enum
+    # Label → Enum
     DISPLAY_TO_ENUM = {
         "English": Language.ENGLISH,
         "Deutsch": Language.GERMAN,
         "Español": Language.SPANISH,
     }
 
-    # Enum → human-readable label
-    ENUM_TO_DISPLAY = {v: k for k, v in DISPLAY_TO_ENUM.items()}
-
-    # Ensure language is ALWAYS valid Enum
-    if not isinstance(language, Language):
+    # Falls language keinen gültigen Wert hat → fallback
+    if language not in ENUM_TO_CODE:
         language = Language.ENGLISH
 
-    # Translation code
-    lang_code = LANGUAGE_MAP[language]
+    lang_code = ENUM_TO_CODE[language]
 
     st.sidebar.title("⚙️ Settings")
 
-    # Language select
+    # LANGUAGE SELECT
+    labels = list(DISPLAY_TO_ENUM.keys())
+    enums  = list(DISPLAY_TO_ENUM.values())
+
+    try:
+        index = enums.index(language)
+    except ValueError:
+        index = 0
+
     selected_label = st.sidebar.selectbox(
         get_text("language_label", lang_code),
-        options=list(DISPLAY_TO_ENUM.keys()),
-        index=list(DISPLAY_TO_ENUM.values()).index(language)
+        options=labels,
+        index=index
     )
 
     selected_language = DISPLAY_TO_ENUM[selected_label]
 
-    # GPT toggle
+    # GPT Toggle
     use_gpt = st.sidebar.checkbox(
         get_text("use_gpt", lang_code),
         value=False
     )
 
-    # API key
+    # API KEY
     api_key = st.sidebar.text_input(
         get_text("api_key", lang_code),
         type="password"
