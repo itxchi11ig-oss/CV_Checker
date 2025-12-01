@@ -452,7 +452,6 @@ def get_text(key: str, language_code: str) -> str:
     if language_code not in TRANSLATIONS:
         language_code = "en"
     return TRANSLATIONS[language_code].get(key, key)
-)
 
 
 def render_sidebar(language: Language):
