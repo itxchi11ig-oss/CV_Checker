@@ -451,18 +451,27 @@ def render_sidebar(language: Language):
     """Render sidebar with settings"""
     st.sidebar.title("⚙️ Settings")
     
+    # Language options with proper indexing
+    lang_options = [
+        ("English", Language.ENGLISH),
+        ("Deutsch", Language.GERMAN),
+        ("Français", Language.FRENCH),
+        ("Español", Language.SPANISH),
+        ("Italiano", Language.ITALIAN)
+    ]
+    
+    # Find current language index
+    current_index = 0
+    for i, (_, lang) in enumerate(lang_options):
+        if lang == language:
+            current_index = i
+            break
+    
     selected_lang = st.sidebar.selectbox(
         get_text("language_label", language),
-        options=[
-            ("English", Language.ENGLISH),
-            ("Deutsch", Language.GERMAN),
-            ("Français", Language.FRENCH),
-            ("Español", Language.SPANISH),
-            ("Italiano", Language.ITALIAN)
-        ],
+        options=lang_options,
         format_func=lambda x: x[0],
-        index=[Language.ENGLISH, Language.GERMAN, Language.FRENCH, 
-               Language.SPANISH, Language.ITALIAN].index(language)
+        index=current_index
     )
     
     st.sidebar.markdown("---")
