@@ -321,6 +321,7 @@ class CVEvaluator:
         
         feedback_templates = {
             Language.ENGLISH: {
+            Language.ENGLISH: {
                 "excellent": "Excellent match! Your CV aligns very well with the job requirements.",
                 "good": "Good match. Your CV shows relevant experience with room for improvement.",
                 "moderate": "Moderate match. Consider tailoring your CV more specifically to this role.",
@@ -381,8 +382,9 @@ class CVEvaluator:
                 "keywords_low": "Bassa corrispondenza di parole chiave. Includi più competenze specifiche."
             }
         }
+        }
         
-        templates = feedback_templates[language]
+        templates = feedback_templates.get(language, feedback_templates[Language.ENGLISH])
         feedback = {}
         
         if overall >= 0.75:
