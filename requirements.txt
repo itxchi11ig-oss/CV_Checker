@@ -6,3 +6,4 @@ numpy
 python-docx
 PyPDF2
 openai
+thefuzz
