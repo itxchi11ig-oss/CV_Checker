@@ -154,10 +154,10 @@ def torch_max_idx(tensor):
 # ==================== VIEW HELPER ====================
 
 def display_pdf(file):
-    """Embeds PDF into the Streamlit app"""
+    """Embeds PDF into the Streamlit app using <object> tag"""
     try:
         base64_pdf = base64.b64encode(file.getvalue()).decode('utf-8')
-        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500px" type="application/pdf"></iframe>'
+        pdf_display = f'<object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="600px"><p>Your browser does not support PDF embedding. <a href="data:application/pdf;base64,{base64_pdf}" download="resume.pdf">Download</a></p></object>'
         st.markdown(pdf_display, unsafe_allow_html=True)
     except Exception as e:
         st.error("Could not display PDF.")
@@ -165,17 +165,43 @@ def display_pdf(file):
 # ==================== UI LAYER ====================
 
 def main():
+    # CSS: FORCED BLACK TEXT
     st.markdown("""
         <style>
-        .match-card { background-color: #e8f5e9; border-left: 5px solid #2e7d32; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
-        .miss-card { background-color: #ffebee; border-left: 5px solid #c62828; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
-        .evidence-text { color: #555; font-style: italic; font-size: 0.9em; margin-top: 5px; }
-        .badge { background-color: #2196F3; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; }
+        .match-card { 
+            background-color: #e8f5e9; 
+            border-left: 5px solid #2e7d32; 
+            padding: 15px; 
+            margin-bottom: 10px; 
+            border-radius: 5px; 
+            color: black !important; 
+        }
+        .miss-card { 
+            background-color: #ffebee; 
+            border-left: 5px solid #c62828; 
+            padding: 15px; 
+            margin-bottom: 10px; 
+            border-radius: 5px; 
+            color: black !important; 
+        }
+        .evidence-text { 
+            color: black !important; 
+            font-style: italic; 
+            font-size: 0.9em; 
+            margin-top: 5px; 
+        }
+        .badge { 
+            background-color: #2196F3; 
+            color: white; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            font-size: 0.8em; 
+        }
         </style>
     """, unsafe_allow_html=True)
 
     st.title("✅ checkyourapplication")
-    st.caption("Advanced ATS Simulator with Resume Preview")
+    st.caption("ATS Simulator")
     
     col1, col2 = st.columns([1, 1])
     
@@ -183,15 +209,17 @@ def main():
         st.subheader("1. Upload Resume")
         cv_file = st.file_uploader("Upload PDF/DOCX", type=["pdf", "docx", "txt"])
         
-        # === NEW FEATURE: DOCUMENT VIEWER ===
+        # === VIEWER TABS ===
         if cv_file:
-            with st.expander("📄 View Uploaded Resume", expanded=True):
+            v_tab1, v_tab2 = st.tabs(["📄 Visual View", "📝 AI Text View"])
+            with v_tab1:
                 if cv_file.name.endswith(".pdf"):
                     display_pdf(cv_file)
                 else:
-                    # For Docx/Txt, we extract and show the raw text
-                    raw_text = TextProcessor.extract_text(cv_file)
-                    st.text_area("Extracted Text Content", raw_text, height=400, disabled=True)
+                    st.info("Visual preview only available for PDF. Use Text View.")
+            with v_tab2:
+                raw_text = TextProcessor.extract_text(cv_file)
+                st.text_area("What the AI sees (Debug):", raw_text, height=400)
 
     with col2:
         st.subheader("2. Job Description")
@@ -201,7 +229,6 @@ def main():
     if st.button("Check My Application", type="primary", use_container_width=True):
         if cv_file and jd_text:
             with st.spinner("Analyzing semantic fit..."):
-                # Reset pointer just in case
                 cv_file.seek(0)
                 cv_text = TextProcessor.extract_text(cv_file)
                 
@@ -220,16 +247,15 @@ def main():
                 
                 st.divider()
                 
-                # Big Score Header
+                # Big Score Header - With Forced Black Text for Descriptions
                 st.markdown(f"""
                 <div style="text-align:center; padding: 20px; background: {color}15; border: 2px solid {color}; border-radius: 15px;">
                     <h1 style="color:{color}; font-size: 4em; margin:0;">{score:.0f}%</h1>
-                    <h2 style="color:#444; margin:0;">{res.feedback}</h2>
-                    <p>Requirements Met: <b>{len(res.satisfied_reqs)}</b> / {len(res.satisfied_reqs)+len(res.missing_reqs)}</p>
+                    <h2 style="color:black; margin:0;">{res.feedback}</h2>
+                    <p style="color:black; font-weight: bold;">Requirements Met: {len(res.satisfied_reqs)} / {len(res.satisfied_reqs)+len(res.missing_reqs)}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Detailed Breakdown
                 st.subheader("📝 Analysis Breakdown")
                 tab1, tab2 = st.tabs([f"✅ Met ({len(res.satisfied_reqs)})", f"❌ Missing ({len(res.missing_reqs)})"])
                 
@@ -240,7 +266,7 @@ def main():
                             <div class="match-card">
                                 <b>{item.requirement}</b><br>
                                 <span class="badge">{item.match_type} Match</span>
-                                <div class="evidence-text">"Found evidence: {item.evidence[:100]}..."</div>
+                                <div class="evidence-text">Found evidence: "{item.evidence[:120]}..."</div>
                             </div>
                             """, unsafe_allow_html=True)
                     else:
