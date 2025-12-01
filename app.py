@@ -5,6 +5,7 @@ import docx
 import numpy as np
 import re
 import math
+import base64
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
 from thefuzz import fuzz # pip install thefuzz
@@ -12,8 +13,8 @@ from thefuzz import fuzz # pip install thefuzz
 # ==================== CONFIGURATION ====================
 
 st.set_page_config(
-    page_title="God Mode ATS",
-    page_icon="⚡",
+    page_title="checkyourapplication",
+    page_icon="✅",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -115,16 +116,14 @@ class HybridCoverageEngine:
                 confidence = semantic_score
             
             # 2. KEYWORD FALLBACK (The "Exact Wording" Check)
-            # If semantic failed, check if we have >50% keyword overlap
             if not is_match:
                 req_keywords = TextProcessor.extract_keywords(req)
                 if req_keywords:
-                    # Search entire CV for these keywords
                     cv_keywords = TextProcessor.extract_keywords(cv_text)
                     overlap = req_keywords.intersection(cv_keywords)
                     coverage = len(overlap) / len(req_keywords)
                     
-                    if coverage >= 0.6: # If you have 60% of the important words
+                    if coverage >= 0.6: 
                         is_match = True
                         match_type = "Keyword (Exact)"
                         best_evidence = f"Found keywords: {', '.join(list(overlap)[:5])}"
@@ -138,9 +137,7 @@ class HybridCoverageEngine:
         # SCORING CURVE
         raw_pct = len(satisfied) / len(requirements)
         
-        # The "God Mode" Curve:
-        # If you satisfy 40% of bullets -> You get 75% Score
-        # If you satisfy 60% of bullets -> You get 90% Score
+        # The "God Mode" Curve
         final_score = 1 / (1 + math.exp(-8 * (raw_pct - 0.25)))
 
         if final_score > 0.85: f = "Top 1% Candidate"
@@ -154,6 +151,17 @@ def torch_max_idx(tensor):
     try: return tensor.argmax()
     except: return np.argmax(tensor.numpy())
 
+# ==================== VIEW HELPER ====================
+
+def display_pdf(file):
+    """Embeds PDF into the Streamlit app"""
+    try:
+        base64_pdf = base64.b64encode(file.getvalue()).decode('utf-8')
+        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500px" type="application/pdf"></iframe>'
+        st.markdown(pdf_display, unsafe_allow_html=True)
+    except Exception as e:
+        st.error("Could not display PDF.")
+
 # ==================== UI LAYER ====================
 
 def main():
@@ -166,19 +174,39 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("⚡ God Mode ATS")
-    st.caption("Hybrid Engine: Semantic Vectors + Fuzzy Keyword Fallback")
+    st.title("✅ checkyourapplication")
+    st.caption("Advanced ATS Simulator with Resume Preview")
     
-    col1, col2 = st.columns(2)
-    cv_file = col1.file_uploader("Upload CV", type=["pdf", "docx", "txt"])
-    jd_text = col2.text_area("Job Description", height=200, placeholder="Paste bullets...")
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("1. Upload Resume")
+        cv_file = st.file_uploader("Upload PDF/DOCX", type=["pdf", "docx", "txt"])
+        
+        # === NEW FEATURE: DOCUMENT VIEWER ===
+        if cv_file:
+            with st.expander("📄 View Uploaded Resume", expanded=True):
+                if cv_file.name.endswith(".pdf"):
+                    display_pdf(cv_file)
+                else:
+                    # For Docx/Txt, we extract and show the raw text
+                    raw_text = TextProcessor.extract_text(cv_file)
+                    st.text_area("Extracted Text Content", raw_text, height=400, disabled=True)
 
-    if st.button("Run Hybrid Analysis", type="primary"):
+    with col2:
+        st.subheader("2. Job Description")
+        jd_text = st.text_area("Paste text bullets here...", height=400, placeholder="• Requirement 1\n• Requirement 2...")
+
+    # Action Button
+    if st.button("Check My Application", type="primary", use_container_width=True):
         if cv_file and jd_text:
-            with st.spinner("Running Double-Pass verification..."):
+            with st.spinner("Analyzing semantic fit..."):
+                # Reset pointer just in case
+                cv_file.seek(0)
                 cv_text = TextProcessor.extract_text(cv_file)
+                
                 if len(cv_text) < 50:
-                    st.error("CV empty")
+                    st.error("CV empty or unreadable.")
                     return
                 
                 @st.cache_resource
@@ -190,6 +218,9 @@ def main():
                 score = res.final_score * 100
                 color = "#00c853" if score > 75 else "#ffab00" if score > 50 else "#ff1744"
                 
+                st.divider()
+                
+                # Big Score Header
                 st.markdown(f"""
                 <div style="text-align:center; padding: 20px; background: {color}15; border: 2px solid {color}; border-radius: 15px;">
                     <h1 style="color:{color}; font-size: 4em; margin:0;">{score:.0f}%</h1>
@@ -198,30 +229,37 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                st.divider()
+                # Detailed Breakdown
+                st.subheader("📝 Analysis Breakdown")
+                tab1, tab2 = st.tabs([f"✅ Met ({len(res.satisfied_reqs)})", f"❌ Missing ({len(res.missing_reqs)})"])
                 
-                c1, c2 = st.columns(2)
-                
-                with c1:
-                    st.subheader(f"✅ Matched Requirements ({len(res.satisfied_reqs)})")
-                    for item in res.satisfied_reqs:
-                        st.markdown(f"""
-                        <div class="match-card">
-                            <b>{item.requirement}</b><br>
-                            <span class="badge">{item.match_type} Match</span>
-                            <div class="evidence-text">"Found evidence: {item.evidence[:100]}..."</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                with tab1:
+                    if res.satisfied_reqs:
+                        for item in res.satisfied_reqs:
+                            st.markdown(f"""
+                            <div class="match-card">
+                                <b>{item.requirement}</b><br>
+                                <span class="badge">{item.match_type} Match</span>
+                                <div class="evidence-text">"Found evidence: {item.evidence[:100]}..."</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.warning("No matches found.")
                         
-                with c2:
-                    st.subheader(f"❌ Unmet Requirements ({len(res.missing_reqs)})")
-                    for req in res.missing_reqs:
-                        st.markdown(f"""
-                        <div class="miss-card">
-                            <b>{req}</b><br>
-                            <div class="evidence-text">Could not find semantic meaning OR keywords for this.</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                with tab2:
+                    if res.missing_reqs:
+                        for req in res.missing_reqs:
+                            st.markdown(f"""
+                            <div class="miss-card">
+                                <b>{req}</b><br>
+                                <div class="evidence-text">The AI could not find this concept or keywords in your document.</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.success("Clean sweep! No requirements missing.")
+
+        else:
+            st.warning("Please provide both a Resume and a Job Description.")
 
 if __name__ == "__main__":
     main()
