@@ -17,19 +17,20 @@ class Language(Enum):
     SPANISH = "es"
     ITALIAN = "it"
 
-# Helper to safely get language code (prevents Streamlit Stale Enum errors)
+# --- HELPER: Fixes Streamlit "Stale Enum" Errors ---
 def get_language_code(lang) -> str:
+    """Safely extracts the string code ('en', 'de') from any Enum object or string."""
     if isinstance(lang, Language):
         return lang.value
     if isinstance(lang, str):
         return lang
-    # Handle stale enums from Streamlit cache
+    # Fallback for stale Enums or unexpected types
     try:
         return lang.value
     except AttributeError:
         return "en"
 
-# Use STRINGS as keys to prevent Enum identity errors
+# --- STRINGS AS KEYS (Prevents KeyError) ---
 TRANSLATIONS = {
     "en": {
         "title": "🎯 AI-Powered CV Evaluator",
@@ -387,7 +388,7 @@ class CVEvaluator:
                           keyword: float, language: Language) -> Dict[str, str]:
         """Generate human-readable feedback in selected language"""
         
-        # Convert language to string code safely
+        # Convert language to string code safely (FIXES THE KEYERROR)
         lang_code = get_language_code(language)
             
         # Access the GLOBAL constant using string key
