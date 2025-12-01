@@ -441,9 +441,10 @@ class CVEvaluationController:
 
 # ==================== VIEW LAYER (Streamlit UI) ====================
 
-def get_text(key: str, language: str) -> str:
-    if language not in TRANSLATIONS:
-        language = "en"  # fallback
+def get_text(key: str, language: Language) -> str:
+    """Get translated text"""
+    if not isinstance(language, Language):
+        language = Language.ENGLISH
     return TRANSLATIONS[language].get(key, key)
 
 def render_sidebar(language: Language):
