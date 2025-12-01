@@ -2,13 +2,12 @@ import streamlit as st
 from sentence_transformers import SentenceTransformer, util
 import PyPDF2
 import docx
-import io
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
 import openai
 from enum import Enum
 import math
 import re
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional
 
 # ==================== CONFIGURATION ====================
 
@@ -30,355 +29,254 @@ def get_safe_lang_code(lang) -> str:
     except AttributeError:
         return "en"
 
-# ==================== MODEL LAYER ====================
+# ==================== LOGIC LAYER ====================
 
 @dataclass
 class EvaluationResult:
     overall_score: float
-    relevance_score: float
-    keyword_match_score: float
+    raw_ai_score: float  # Added for transparency
+    keyword_score: float
     detailed_feedback: Dict[str, str]
     matched_skills: List[str]
     missing_skills: List[str]
     ai_suggestions: Optional[str] = None
 
 class CVParser:
-    """Handles CV document parsing with better error safety"""
-    
     @staticmethod
     def extract_text(file) -> str:
-        file_type = file.name.split('.')[-1].lower()
         try:
+            file_type = file.name.split('.')[-1].lower()
             if file_type == 'pdf':
-                pdf_reader = PyPDF2.PdfReader(file)
-                text = "".join([page.extract_text() or "" for page in pdf_reader.pages])
-                return text
+                reader = PyPDF2.PdfReader(file)
+                return " ".join([page.extract_text() or "" for page in reader.pages])
             elif file_type in ['docx', 'doc']:
                 doc = docx.Document(file)
-                return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+                return "\n".join([p.text for p in doc.paragraphs])
             elif file_type == 'txt':
                 return file.getvalue().decode('utf-8')
-            else:
-                return ""
+            return ""
         except Exception as e:
-            st.error(f"Error reading file: {e}")
             return ""
 
 class GPTEvaluator:
-    """GPT-4 based evaluation for detailed suggestions"""
-    
     def __init__(self, api_key: str, language_code: str):
         self.client = openai.OpenAI(api_key=api_key)
         self.language_code = language_code
     
-    def get_detailed_suggestions(self, cv_text: str, job_desc: str, 
-                                eval_result: EvaluationResult) -> str:
+    def get_detailed_suggestions(self, cv_text: str, job_desc: str, result: EvaluationResult) -> str:
+        lang_map = {"en": "English", "de": "German", "fr": "French", "es": "Spanish", "it": "Italian"}
+        lang_name = lang_map.get(self.language_code, "English")
         
-        lang_names = {
-            "en": "English", "de": "German", "fr": "French", 
-            "es": "Spanish", "it": "Italian"
-        }
-        lang_name = lang_names.get(self.language_code, "English")
+        prompt = f"""
+        Act as a senior technical recruiter. Review this CV against the Job Description.
         
-        prompt = f"""You are an expert technical recruiter. Analyze this CV against the Job Description.
-
-Job Description:
-{job_desc[:2000]}
-
-CV Snippet:
-{cv_text[:2000]}
-
-Data:
-- Match Score: {eval_result.overall_score*100:.1f}%
-- Missing Keywords: {', '.join(eval_result.missing_skills[:10])}
-
-Task:
-Provide 3 highly specific, critical changes to improve this CV's match rate. Focus on hard skills and measurable results.
-Respond in {lang_name}."""
-
+        MATCH SCORE: {result.overall_score*100:.1f}%
+        
+        JOB DESCRIPTION:
+        {job_desc[:1500]}
+        
+        CV SUMMARY:
+        {cv_text[:1500]}
+        
+        Provide 3 specific, brutal, and actionable changes to improve the match score. 
+        Focus on hard skills missing from the CV that are present in the JD.
+        Output language: {lang_name}.
+        """
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": f"You are a helpful recruiter speaking {lang_name}."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=600,
-                temperature=0.5
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"AI Suggestion Error: {str(e)}"
+            return f"AI Error: {str(e)}"
 
 class CVEvaluator:
-    """Core evaluation logic with Expert Calibration"""
-    
     def __init__(self, model_name: str = 'paraphrase-multilingual-mpnet-base-v2'):
         self.model = SentenceTransformer(model_name)
-        
-        # EXPERT TUNING: Stopwords to ignore in keyword calculation
-        # These are filler words that inflate/deflate scores artificially.
-        self.stopwords = {
-            # English
-            "the", "and", "for", "that", "this", "with", "from", "have", "will", 
-            "work", "team", "skills", "experience", "years", "responsible", "duties",
-            "required", "preferred", "qualification", "summary", "objective",
-            # German
-            "und", "der", "die", "das", "mit", "für", "von", "dass", "wir", 
-            "erfahrung", "kenntnisse", "jahre", "teamfähig", "aufgaben",
-            # French
-            "pour", "avec", "dans", "les", "des", "une", "est", "sur", "expérience",
-            # Spanish
-            "para", "con", "las", "los", "una", "que", "por", "experiencia",
-            # Italian
-            "per", "con", "del", "della", "che", "una", "sono", "esperienza"
-        }
-    
-    def calculate_semantic_similarity(self, cv_text: str, job_desc: str) -> float:
-        # 1. Compute Embeddings
-        cv_embedding = self.model.encode(cv_text, convert_to_tensor=True)
-        job_embedding = self.model.encode(job_desc, convert_to_tensor=True)
-        
-        # 2. Compute Raw Cosine Similarity (Usually between 0.0 and 0.5 for text)
-        similarity = util.cos_sim(cv_embedding, job_embedding)
-        return float(similarity[0][0])
-    
-    def calibrate_score(self, raw_score: float) -> float:
-        """
-        EXPERT CALIBRATION:
-        Raw Cosine Similarity is rarely 1.0 for documents.
-        A score of 0.45 is usually a "Great Match".
-        A score of 0.15 is usually "Irrelevant".
-        We map [0.15, 0.75] -> [0.0, 1.0]
-        """
-        lower_bound = 0.15
-        upper_bound = 0.75
-        
-        if raw_score <= lower_bound:
-            return 0.0
-        if raw_score >= upper_bound:
-            return 1.0
-            
-        # Linear mapping between bounds
-        return (raw_score - lower_bound) / (upper_bound - lower_bound)
+        # Extensive stopword lists to clean noise
+        self.stopwords = set("""
+        the and for that with from have will work team skills experience years 
+        responsible duties required preferred summary objective
+        und der die das mit für von dass wir erfahrung kenntnisse jahre aufgaben
+        pour avec dans les des une est sur expérience
+        para con las los una que por experiencia
+        per con del della che una sono esperienza
+        is a an or to in at be as on by it
+        """.split())
 
-    def extract_keywords(self, text: str) -> List[str]:
-        # Simple but effective cleaning
-        text = re.sub(r'[^\w\s]', '', text.lower())
+    def clean_text(self, text: str) -> List[str]:
+        """Cleans text to extracting meaningful unique keywords"""
+        # Remove special chars, lower case
+        text = re.sub(r'[^\w\s]', ' ', text.lower())
         words = text.split()
+        # Filter stopwords and short words
+        return [w for w in words if len(w) > 3 and w not in self.stopwords and not w.isdigit()]
+
+    def calculate_similarity(self, cv_text: str, job_desc: str) -> float:
+        """Calculates raw cosine similarity (Math Layer)"""
+        emb1 = self.model.encode(cv_text, convert_to_tensor=True)
+        emb2 = self.model.encode(job_desc, convert_to_tensor=True)
+        return float(util.cos_sim(emb1, emb2)[0][0])
+
+    def sigmoid_normalize(self, raw_score: float) -> float:
+        """
+        THE MAGIC SAUCE: Converts Robot Math to Human Grades.
+        Raw scores usually float between 0.2 (bad) and 0.6 (perfect).
+        We map this to a 0% - 100% scale using a Logistic Curve.
+        """
+        # Center point (x0): 0.35 (This counts as a 50% match)
+        # Steepness (k): 10 (How fast it rises)
+        x0 = 0.30
+        k = 12
         
-        # Filter out stopwords and short words
-        keywords = [
-            w for w in words 
-            if len(w) > 3 
-            and w not in self.stopwords
-            and not w.isdigit()
-        ]
-        return list(set(keywords))
-    
-    def calculate_keyword_match(self, cv_text: str, job_desc: str) -> Tuple[float, List[str], List[str]]:
-        cv_keywords = set(self.extract_keywords(cv_text))
-        job_keywords = set(self.extract_keywords(job_desc))
+        # Logistic Function
+        human_score = 1 / (1 + math.exp(-k * (raw_score - x0)))
+        return human_score
+
+    def evaluate(self, cv_text: str, job_desc: str, lang_code: str) -> EvaluationResult:
+        # 1. Semantic Match (The Meaning)
+        raw_ai_score = self.calculate_similarity(cv_text, job_desc)
+        human_semantic_score = self.sigmoid_normalize(raw_ai_score)
         
-        if not job_keywords:
-            return 0.0, [], []
+        # 2. Keyword Match (The Buzzwords)
+        cv_words = set(self.clean_text(cv_text))
+        jd_words = set(self.clean_text(job_desc))
         
-        matched = cv_keywords.intersection(job_keywords)
-        missing = job_keywords - cv_keywords
-        
-        raw_match = len(matched) / len(job_keywords)
-        
-        # Curve the keyword score: If you have 40% of the exact keywords, that's excellent.
-        # We multiply by 2.0, capping at 1.0
-        adjusted_match = min(1.0, raw_match * 2.0)
-        
-        return adjusted_match, list(matched)[:20], list(missing)[:20]
-    
-    def evaluate(self, cv_text: str, job_desc: str, language_code: str) -> EvaluationResult:
-        # 1. Semantics (The "Meaning" Match)
-        raw_relevance = self.calculate_semantic_similarity(cv_text, job_desc)
-        calibrated_relevance = self.calibrate_score(raw_relevance)
-        
-        # 2. Keywords (The "Buzzword" Match)
-        keyword_score, matched, missing = self.calculate_keyword_match(cv_text, job_desc)
-        
-        # 3. Weighted Score (75% Meaning, 25% Keywords)
-        overall_score = (calibrated_relevance * 0.75) + (keyword_score * 0.25)
-        
-        feedback = self._generate_feedback(overall_score, calibrated_relevance, keyword_score, language_code)
+        if not jd_words:
+            keyword_score = 0.0
+            matched = []
+            missing = []
+        else:
+            matched = list(cv_words.intersection(jd_words))
+            missing = list(jd_words - cv_words)
+            # Keyword score: heavily boosted because JDs have junk words too
+            keyword_score = min(1.0, (len(matched) / len(jd_words)) * 2.5)
+
+        # 3. Final Weighted Score (70% Semantic, 30% Keywords)
+        final_score = (human_semantic_score * 0.7) + (keyword_score * 0.3)
         
         return EvaluationResult(
-            overall_score=overall_score,
-            relevance_score=calibrated_relevance,
-            keyword_match_score=keyword_score,
-            detailed_feedback=feedback,
-            matched_skills=matched,
-            missing_skills=missing
+            overall_score=final_score,
+            raw_ai_score=raw_ai_score,
+            keyword_score=keyword_score,
+            detailed_feedback=self.generate_feedback(final_score, lang_code),
+            matched_skills=sorted(matched)[:10],
+            missing_skills=sorted(missing)[:10]
         )
-    
-    def _generate_feedback(self, overall: float, relevance: float, 
-                          keyword: float, language_code: str) -> Dict[str, str]:
-        
-        FEEDBACK_DB = {
-            "en": {
-                "excellent": "Excellent match! Your profile is highly competitive.",
-                "good": "Good match. You have the core skills, but could optimize further.",
-                "moderate": "Moderate match. Focus on including more specific keywords from the job desc.",
-                "low": "Low match. The semantics of your CV do not align well with this role.",
-            },
-            "de": {
-                "excellent": "Exzellentes Ergebnis! Ihr Profil ist sehr wettbewerbsfähig.",
-                "good": "Gutes Ergebnis. Sie haben die Kernkompetenzen, könnten aber noch optimieren.",
-                "moderate": "Mäßiges Ergebnis. Versuchen Sie, mehr spezifische Begriffe aus der Stelle zu nutzen.",
-                "low": "Geringes Ergebnis. Die Semantik Ihres Lebenslaufs passt nicht gut zur Rolle.",
-            }
-            # (Simplified for brevity, English/German defaults cover most testing)
+
+    def generate_feedback(self, score: float, lang: str) -> Dict[str, str]:
+        # Simple feedback logic based on the Human Score
+        texts = {
+            "en": ["Low Match", "Moderate Match", "Good Match", "Excellent Match"],
+            "de": ["Geringe Übereinstimmung", "Mäßige Übereinstimmung", "Gute Übereinstimmung", "Exzellent"],
+            "fr": ["Faible", "Modérée", "Bonne", "Excellente"],
+            "es": ["Baja", "Moderada", "Buena", "Excelente"],
+            "it": ["Bassa", "Moderata", "Buona", "Eccellente"]
         }
+        labels = texts.get(lang, texts["en"])
         
-        # Default to English if missing
-        texts = FEEDBACK_DB.get(language_code, FEEDBACK_DB["en"])
+        if score < 0.4: idx = 0
+        elif score < 0.6: idx = 1
+        elif score < 0.8: idx = 2
+        else: idx = 3
         
-        feedback = {}
-        
-        # Grading Scale
-        if overall >= 0.80:
-            feedback['overall'] = texts["excellent"]
-        elif overall >= 0.60:
-            feedback['overall'] = texts["good"]
-        elif overall >= 0.40:
-            feedback['overall'] = texts["moderate"]
-        else:
-            feedback['overall'] = texts["low"]
-            
-        return feedback
-
-# ==================== CONTROLLER LAYER ====================
-
-class CVEvaluationController:
-    def __init__(self):
-        self.parser = CVParser()
-        self.gpt_evaluator = None
-        self.evaluator = None
-    
-    @st.cache_resource
-    def load_expert_model(_self):
-        return CVEvaluator()
-    
-    def process_evaluation(self, cv_file, job_description: str, 
-                          language: Language, api_key: Optional[str] = None,
-                          use_gpt: bool = False) -> EvaluationResult:
-        
-        lang_code = get_safe_lang_code(language)
-        
-        if self.evaluator is None:
-            self.evaluator = self.load_expert_model()
-        
-        cv_text = self.parser.extract_text(cv_file)
-        if len(cv_text) < 50:
-             # Basic error handling for empty/unreadable PDFs
-            return EvaluationResult(0,0,0, {"overall": "Error reading CV text."}, [], [])
-
-        result = self.evaluator.evaluate(cv_text, job_description, lang_code)
-        
-        if use_gpt and api_key:
-            try:
-                if self.gpt_evaluator is None or self.gpt_evaluator.language_code != lang_code:
-                    self.gpt_evaluator = GPTEvaluator(api_key, lang_code)
-                
-                result.ai_suggestions = self.gpt_evaluator.get_detailed_suggestions(
-                    cv_text, job_description, result
-                )
-            except Exception as e:
-                result.ai_suggestions = f"GPT Error: {str(e)}"
-        
-        return result
+        return {"overall": labels[idx]}
 
 # ==================== VIEW LAYER ====================
 
-def render_sidebar(language: Language):
-    st.sidebar.title("⚙️ Settings")
-    
-    lang_options = [
-        ("English", Language.ENGLISH),
-        ("Deutsch", Language.GERMAN),
-        ("Français", Language.FRENCH),
-        ("Español", Language.SPANISH),
-        ("Italiano", Language.ITALIAN)
-    ]
-    
-    current_code = get_safe_lang_code(language)
-    current_index = 0
-    for i, (_, lang) in enumerate(lang_options):
-        if lang.value == current_code:
-            current_index = i
-            break
-            
-    selected_lang_tuple = st.sidebar.selectbox(
-        "Select Language",
-        options=lang_options,
-        format_func=lambda x: x[0],
-        index=current_index
-    )
-    
-    st.sidebar.markdown("---")
-    use_gpt = st.sidebar.checkbox("Use GPT-4 (Optional)", value=False)
-    api_key = None
-    if use_gpt:
-        api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+class Controller:
+    def __init__(self):
+        self.evaluator = self.load_model()
+        self.gpt = None
+
+    @st.cache_resource
+    def load_model(_self):
+        return CVEvaluator()
+
+    def process(self, cv, jd, lang, api_key, use_gpt):
+        lang_code = get_safe_lang_code(lang)
+        cv_text = CVParser.extract_text(cv)
         
-    return selected_lang_tuple[1], use_gpt, api_key
+        if len(cv_text) < 50:
+            return None
+            
+        result = self.evaluator.evaluate(cv_text, jd, lang_code)
+        
+        if use_gpt and api_key:
+            if not self.gpt or self.gpt.language_code != lang_code:
+                self.gpt = GPTEvaluator(api_key, lang_code)
+            result.ai_suggestions = self.gpt.get_detailed_suggestions(cv_text, jd, result)
+            
+        return result
 
 def main():
-    st.set_page_config(page_title="Expert CV Evaluator", page_icon="🚀", layout="wide")
+    st.set_page_config(page_title="AI CV Matcher Pro", page_icon="🚀", layout="wide")
     
-    if 'language' not in st.session_state:
-        st.session_state.language = Language.ENGLISH
-        
-    language, use_gpt, api_key = render_sidebar(st.session_state.language)
-    st.session_state.language = language
+    # Session State Init
+    if 'lang' not in st.session_state: st.session_state.lang = "en"
     
-    st.title("🚀 AI Smart Resume Matcher")
-    st.markdown("This tool uses **Expert Calibrated** scoring. A score of **60%+** is considered a good match.")
+    # Sidebar
+    st.sidebar.title("⚙️ Config")
+    lang_map = {"en": "English", "de": "Deutsch", "fr": "Français", "es": "Español", "it": "Italiano"}
+    sel_lang = st.sidebar.selectbox("Language", options=list(lang_map.keys()), format_func=lambda x: lang_map[x])
+    st.session_state.lang = sel_lang
     
-    col1, col2 = st.columns(2)
-    with col1:
-        cv_file = st.file_uploader("Upload CV (PDF/DOCX)", type=['pdf', 'docx', 'txt'])
-    with col2:
-        job_desc = st.text_area("Job Description", height=150)
-        
+    use_gpt = st.sidebar.checkbox("Enable GPT-4 Suggestions")
+    api_key = st.sidebar.text_input("OpenAI API Key", type="password") if use_gpt else None
+    
+    # Main UI
+    st.title(f"🚀 AI CV Matcher ({lang_map[st.session_state.lang]})")
+    st.markdown("This tool uses **Sigmoid Normalization** to convert raw AI vectors into realistic human match scores.")
+    
+    c1, c2 = st.columns(2)
+    cv = c1.file_uploader("Upload Resume", type=["pdf", "docx", "txt"])
+    jd = c2.text_area("Paste Job Description", height=200)
+    
     if st.button("Analyze Match", type="primary"):
-        if cv_file and job_desc:
-            with st.spinner("Calculating semantic vectors..."):
-                controller = CVEvaluationController()
-                result = controller.process_evaluation(cv_file, job_desc, language, api_key, use_gpt)
+        if cv and jd:
+            with st.spinner("Analyzing semantic vectors..."):
+                ctrl = Controller()
+                res = ctrl.process(cv, jd, st.session_state.lang, api_key, use_gpt)
                 
-                # Visualization
-                st.divider()
-                score = result.overall_score * 100
-                
-                # Dynamic Color
-                if score >= 80: color = "green"
-                elif score >= 60: color = "orange"
-                else: color = "red"
-                
-                st.markdown(f"<h1 style='text-align: center; color: {color}'>{score:.1f}% Match</h1>", unsafe_allow_html=True)
-                
-                c1, c2 = st.columns(2)
-                c1.metric("Semantic Match (Meaning)", f"{result.relevance_score*100:.1f}%")
-                c2.metric("Keyword Match (Buzzwords)", f"{result.keyword_match_score*100:.1f}%")
-                
-                st.info(f"**Feedback:** {result.detailed_feedback.get('overall', '')}")
-                
-                if result.ai_suggestions:
-                    st.subheader("🤖 AI Suggestions")
-                    st.write(result.ai_suggestions)
+                if res:
+                    # Score Card
+                    score = res.overall_score * 100
+                    color = "red" if score < 50 else "orange" if score < 75 else "green"
                     
-                st.subheader("🔍 Keyword Analysis")
-                c3, c4 = st.columns(2)
-                c3.success(f"Matched: {', '.join(result.matched_skills)}")
-                c4.error(f"Missing: {', '.join(result.missing_skills)}")
+                    st.markdown(f"""
+                    <div style="text-align: center; padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px;">
+                        <h2 style="margin:0; color: #31333F;">Overall Match</h2>
+                        <h1 style="margin:0; font-size: 3em; color: {color};">{score:.1f}%</h1>
+                        <p style="margin:0;"><b>{res.detailed_feedback['overall']}</b></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Metrics
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Semantic Match", f"{res.overall_score*100:.0f}%", help="Based on meaning/context")
+                    m2.metric("Keyword Overlap", f"{res.keyword_score*100:.0f}%", help="Based on exact word matches")
+                    m3.metric("Raw AI Score", f"{res.raw_ai_score:.3f}", help="The raw Cosine Similarity (0-1)")
+
+                    # Keywords
+                    st.subheader("🔑 Keyword Gap Analysis")
+                    k1, k2 = st.columns(2)
+                    k1.success(f"✅ Matched ({len(res.matched_skills)})")
+                    k1.write(", ".join(res.matched_skills) if res.matched_skills else "No exact matches found")
+                    
+                    k2.error(f"❌ Missing / Potential Gaps")
+                    k2.write(", ".join(res.missing_skills) if res.missing_skills else "No major gaps found")
+                    
+                    # AI Suggestions
+                    if res.ai_suggestions:
+                        st.divider()
+                        st.subheader("🤖 GPT-4 Recruiter Feedback")
+                        st.write(res.ai_suggestions)
+                else:
+                    st.error("Could not read text from CV. Please try a different file format.")
         else:
-            st.warning("Please upload a CV and enter a Job Description.")
+            st.warning("Please provide both a CV and a Job Description.")
 
 if __name__ == "__main__":
     main()
