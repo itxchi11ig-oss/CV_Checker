@@ -17,20 +17,18 @@ class Language(Enum):
     SPANISH = "es"
     ITALIAN = "it"
 
-# --- HELPER: Fixes Streamlit "Stale Enum" Errors ---
-def get_language_code(lang) -> str:
-    """Safely extracts the string code ('en', 'de') from any Enum object or string."""
+# Helper to always get a string "en", "de", etc.
+def get_safe_lang_code(lang) -> str:
     if isinstance(lang, Language):
         return lang.value
     if isinstance(lang, str):
         return lang
-    # Fallback for stale Enums or unexpected types
     try:
         return lang.value
     except AttributeError:
         return "en"
 
-# --- STRINGS AS KEYS (Prevents KeyError) ---
+# KEYS ARE NOW STRICTLY STRINGS
 TRANSLATIONS = {
     "en": {
         "title": "🎯 AI-Powered CV Evaluator",
@@ -159,6 +157,7 @@ TRANSLATIONS = {
     }
 }
 
+# KEYS ARE NOW STRICTLY STRINGS
 FEEDBACK_TEMPLATES = {
     "en": {
         "excellent": "Excellent match! Your CV aligns very well with the job requirements.",
@@ -269,9 +268,9 @@ class CVParser:
 class GPTEvaluator:
     """GPT-4 based evaluation for detailed suggestions"""
     
-    def __init__(self, api_key: str, language: Language):
+    def __init__(self, api_key: str, language_code: str):
         self.client = openai.OpenAI(api_key=api_key)
-        self.language = language
+        self.language_code = language_code
     
     def get_detailed_suggestions(self, cv_text: str, job_desc: str, 
                                 eval_result: EvaluationResult) -> str:
@@ -285,8 +284,8 @@ class GPTEvaluator:
             "it": "Italian"
         }
         
-        lang_code = get_language_code(self.language)
-        lang_name = language_prompts.get(lang_code, "English")
+        # Use string code directly
+        lang_name = language_prompts.get(self.language_code, "English")
         
         prompt = f"""You are an expert career advisor. Analyze the following CV against the job description and provide specific, actionable suggestions for improvement.
 
@@ -365,7 +364,7 @@ class CVEvaluator:
         match_score = len(matched) / len(job_keywords)
         return match_score, list(matched)[:15], list(missing)[:15]
     
-    def evaluate(self, cv_text: str, job_desc: str, language: Language) -> EvaluationResult:
+    def evaluate(self, cv_text: str, job_desc: str, language_code: str) -> EvaluationResult:
         """Complete evaluation of CV against job description"""
         
         relevance_score = self.calculate_semantic_similarity(cv_text, job_desc)
@@ -373,7 +372,8 @@ class CVEvaluator:
         
         overall_score = (relevance_score * 0.7) + (keyword_score * 0.3)
         
-        feedback = self._generate_feedback(overall_score, relevance_score, keyword_score, language)
+        # NOTE: We pass the language_code string here, NOT the Enum
+        feedback = self._generate_feedback(overall_score, relevance_score, keyword_score, language_code)
         
         return EvaluationResult(
             overall_score=overall_score,
@@ -385,14 +385,14 @@ class CVEvaluator:
         )
     
     def _generate_feedback(self, overall: float, relevance: float, 
-                          keyword: float, language: Language) -> Dict[str, str]:
+                          keyword: float, language_code: str) -> Dict[str, str]:
         """Generate human-readable feedback in selected language"""
         
-        # Convert language to string code safely (FIXES THE KEYERROR)
-        lang_code = get_language_code(language)
+        # DOUBLE CHECK: Ensure we are working with a string
+        safe_lang = get_safe_lang_code(language_code)
             
-        # Access the GLOBAL constant using string key
-        templates = FEEDBACK_TEMPLATES.get(lang_code, FEEDBACK_TEMPLATES["en"])
+        # Access the dictionary with the STRING key
+        templates = FEEDBACK_TEMPLATES.get(safe_lang, FEEDBACK_TEMPLATES["en"])
         
         feedback = {}
         
@@ -441,20 +441,27 @@ class CVEvaluationController:
                           use_gpt: bool = False) -> EvaluationResult:
         """Process complete evaluation workflow"""
         
+        # =========================================================
+        # CRITICAL FIX: CONVERT ENUM TO STRING IMMEDIATELY
+        # This strips away the Enum object and passes only the string "de", "en", etc.
+        # =========================================================
+        lang_code = get_safe_lang_code(language)
+        
         if self.evaluator is None:
             self.evaluator = self.load_model()
         
         cv_text = self.parser.extract_text(cv_file)
-        result = self.evaluator.evaluate(cv_text, job_description, language)
+        
+        # Pass the STRING to evaluate
+        result = self.evaluator.evaluate(cv_text, job_description, lang_code)
         
         if use_gpt and api_key:
             try:
-                # Check safe language comparison using values
-                current_lang_val = get_language_code(language)
-                cached_lang_val = get_language_code(self.gpt_evaluator.language) if self.gpt_evaluator else None
+                # Use string comparison
+                cached_lang_val = self.gpt_evaluator.language_code if self.gpt_evaluator else None
                 
-                if self.gpt_evaluator is None or cached_lang_val != current_lang_val:
-                    self.gpt_evaluator = GPTEvaluator(api_key, language)
+                if self.gpt_evaluator is None or cached_lang_val != lang_code:
+                    self.gpt_evaluator = GPTEvaluator(api_key, lang_code)
                 
                 result.ai_suggestions = self.gpt_evaluator.get_detailed_suggestions(
                     cv_text, job_description, result
@@ -468,7 +475,7 @@ class CVEvaluationController:
 
 def get_text(key: str, language: Language) -> str:
     """Get translated text"""
-    lang_code = get_language_code(language)
+    lang_code = get_safe_lang_code(language)
     return TRANSLATIONS.get(lang_code, TRANSLATIONS["en"]).get(key, key)
 
 def render_sidebar(language: Language):
@@ -484,8 +491,8 @@ def render_sidebar(language: Language):
         ("Italiano", Language.ITALIAN)
     ]
     
-    # Safely find current index by comparing values
-    current_code = get_language_code(language)
+    # Safely find current index by comparing string values
+    current_code = get_safe_lang_code(language)
     current_index = 0
     
     for i, (_, lang) in enumerate(lang_options):
