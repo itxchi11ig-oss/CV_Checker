@@ -7,12 +7,13 @@ import re
 import math
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
+from thefuzz import fuzz # pip install thefuzz
 
 # ==================== CONFIGURATION ====================
 
 st.set_page_config(
-    page_title="Semantic Coverage ATS",
-    page_icon="🧠",
+    page_title="God Mode ATS",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -20,9 +21,16 @@ st.set_page_config(
 # ==================== CORE ENGINE ====================
 
 @dataclass
+class MatchEvidence:
+    requirement: str
+    match_type: str  # "Semantic" or "Keyword"
+    evidence: str    # The snippet from CV that triggered it
+    confidence: float
+
+@dataclass
 class MatchResult:
     final_score: float
-    satisfied_reqs: List[str]
+    satisfied_reqs: List[MatchEvidence]
     missing_reqs: List[str]
     feedback: str
 
@@ -41,174 +49,179 @@ class TextProcessor:
             elif name.endswith('.txt'):
                 text = file.getvalue().decode('utf-8')
             
-            # Clean up whitespace and special chars
+            # Clean up whitespace
             text = re.sub(r'\s+', ' ', text).strip()
             return text
         except: return ""
 
     @staticmethod
     def split_into_requirements(jd_text: str) -> List[str]:
-        """
-        Splits a Job Description into distinct actionable requirements.
-        It splits by bullet points, newlines, or sentence endings.
-        """
-        # 1. Split by common delimiters
+        # Intelligent split by bullet points and newlines
         raw_chunks = re.split(r'[\n•●\-\;]', jd_text)
-        
         cleaned_reqs = []
         for chunk in raw_chunks:
             c = chunk.strip()
-            # Filter out short junk (headers, page numbers)
-            if len(c) > 15 and len(c.split()) > 3: 
-                # Filter out legal boilerplate
-                if "equal opportunity" not in c.lower() and "gender" not in c.lower():
+            # Filter noise
+            if len(c) > 10 and len(c.split()) > 2: 
+                if "equal opportunity" not in c.lower():
                     cleaned_reqs.append(c)
-        
         return cleaned_reqs
 
-class SemanticCoverageEngine:
+    @staticmethod
+    def extract_keywords(text: str) -> set:
+        # Simple extraction of significant words (len > 3)
+        words = re.sub(r'[^a-zA-Z0-9\+\#]', ' ', text.lower()).split()
+        return set([w for w in words if len(w) > 3])
+
+class HybridCoverageEngine:
     def __init__(self):
-        # We use a model trained specifically for semantic search
-        # It knows that "Python" is related to "Coding"
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
 
     def analyze(self, cv_text: str, jd_text: str) -> MatchResult:
-        # 1. Breakdown the JD into specific demands
         requirements = TextProcessor.split_into_requirements(jd_text)
         
         if not requirements:
-            return MatchResult(0, [], [], "Job Description too short or empty.")
+            return MatchResult(0, [], [], "JD Empty")
 
-        # 2. Encode the CV as one giant knowledge block (and chunks)
-        # We perform a sliding window search over the CV to find the best matching section for each req
+        # Split CV into sentences for granular matching
         cv_sentences = re.split(r'(?<=[.!?]) +', cv_text)
+        
+        # Pre-compute CV embeddings
         cv_embeddings = self.model.encode(cv_sentences, convert_to_tensor=True)
         
         satisfied = []
         missing = []
-        total_similarity = 0.0
         
-        # 3. Iterate through every requirement in the JD
+        # === THE HYBRID LOOP ===
         for req in requirements:
+            is_match = False
+            best_evidence = ""
+            match_type = ""
+            confidence = 0.0
+
+            # 1. SEMANTIC CHECK (The "Meaning" Check)
             req_embedding = self.model.encode(req, convert_to_tensor=True)
-            
-            # Find the single sentence in the CV that best matches this specific requirement
             cos_scores = util.cos_sim(req_embedding, cv_embeddings)[0]
-            best_match_score = float(torch_max(cos_scores))
+            best_idx = int(torch_max_idx(cos_scores))
+            semantic_score = float(cos_scores[best_idx])
             
-            # THRESHOLD LOGIC
-            # 0.35 in Semantic Vectors is usually a "soft match" (Conceptually similar)
-            # 0.50 is a "hard match" (Clear evidence)
-            if best_match_score >= 0.32: 
-                satisfied.append(req)
-                total_similarity += best_match_score
+            # Dynamic Threshold: Shorter requirements need higher exactness
+            threshold = 0.35 if len(req.split()) > 5 else 0.45
+            
+            if semantic_score > threshold:
+                is_match = True
+                match_type = "Semantic (Meaning)"
+                best_evidence = cv_sentences[best_idx]
+                confidence = semantic_score
+            
+            # 2. KEYWORD FALLBACK (The "Exact Wording" Check)
+            # If semantic failed, check if we have >50% keyword overlap
+            if not is_match:
+                req_keywords = TextProcessor.extract_keywords(req)
+                if req_keywords:
+                    # Search entire CV for these keywords
+                    cv_keywords = TextProcessor.extract_keywords(cv_text)
+                    overlap = req_keywords.intersection(cv_keywords)
+                    coverage = len(overlap) / len(req_keywords)
+                    
+                    if coverage >= 0.6: # If you have 60% of the important words
+                        is_match = True
+                        match_type = "Keyword (Exact)"
+                        best_evidence = f"Found keywords: {', '.join(list(overlap)[:5])}"
+                        confidence = coverage
+
+            if is_match:
+                satisfied.append(MatchEvidence(req, match_type, best_evidence, confidence))
             else:
                 missing.append(req)
 
-        # 4. SCORING
-        # Raw Coverage %: (Requirements Met / Total Requirements)
-        coverage_pct = len(satisfied) / len(requirements)
+        # SCORING CURVE
+        raw_pct = len(satisfied) / len(requirements)
         
-        # 5. THE REALITY CURVE
-        # If you meet 50% of requirements in a JD, you are usually a Top Candidate.
-        # We curve 0.5 -> 0.85
-        final_score = self.apply_hiring_curve(coverage_pct)
-        
-        # Feedback
-        if final_score > 0.85: f = "Excellent Fit (Interview Ready)"
-        elif final_score > 0.70: f = "Strong Fit"
-        elif final_score > 0.50: f = "Potential Match"
-        else: f = "Low Match"
+        # The "God Mode" Curve:
+        # If you satisfy 40% of bullets -> You get 75% Score
+        # If you satisfy 60% of bullets -> You get 90% Score
+        final_score = 1 / (1 + math.exp(-8 * (raw_pct - 0.25)))
+
+        if final_score > 0.85: f = "Top 1% Candidate"
+        elif final_score > 0.70: f = "Interview Ready"
+        elif final_score > 0.50: f = "Strong Potential"
+        else: f = "Needs Optimization"
 
         return MatchResult(final_score, satisfied, missing, f)
 
-    def apply_hiring_curve(self, raw_pct: float) -> float:
-        """
-        Real World Logic:
-        - 20% match = 50% Score (You have some basics)
-        - 50% match = 85% Score (You are hireable)
-        - 80% match = 99% Score (Unicorn)
-        """
-        # Sigmoid function shifted to be generous
-        return 1 / (1 + math.exp(-6 * (raw_pct - 0.3)))
-
-# Helper for tensor max (works with torch or numpy fallback)
-def torch_max(tensor):
-    try: return tensor.max()
-    except: return np.max(tensor.numpy())
+def torch_max_idx(tensor):
+    try: return tensor.argmax()
+    except: return np.argmax(tensor.numpy())
 
 # ==================== UI LAYER ====================
 
 def main():
     st.markdown("""
         <style>
-        .stProgress > div > div > div > div { background-color: #4CAF50; }
-        .score-card { background: #f8f9fa; border-radius:10px; padding:20px; text-align:center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .req-pass { color: #2e7d32; padding: 5px; border-left: 3px solid #2e7d32; margin-bottom: 5px; background: #e8f5e9; }
-        .req-fail { color: #c62828; padding: 5px; border-left: 3px solid #c62828; margin-bottom: 5px; background: #ffebee; }
+        .match-card { background-color: #e8f5e9; border-left: 5px solid #2e7d32; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
+        .miss-card { background-color: #ffebee; border-left: 5px solid #c62828; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
+        .evidence-text { color: #555; font-style: italic; font-size: 0.9em; margin-top: 5px; }
+        .badge { background-color: #2196F3; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; }
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("🧠 Semantic Coverage ATS")
-    st.caption("This tool ignores keywords. It reads your CV sentence-by-sentence to see if you meet the specific requirements.")
+    st.title("⚡ God Mode ATS")
+    st.caption("Hybrid Engine: Semantic Vectors + Fuzzy Keyword Fallback")
     
     col1, col2 = st.columns(2)
-    cv_file = col1.file_uploader("Upload Resume", type=["pdf", "docx", "txt"])
-    jd_text = col2.text_area("Paste Job Description", height=250, placeholder="Paste the bullet points here...")
+    cv_file = col1.file_uploader("Upload CV", type=["pdf", "docx", "txt"])
+    jd_text = col2.text_area("Job Description", height=200, placeholder="Paste bullets...")
 
-    if st.button("Calculate Coverage", type="primary"):
+    if st.button("Run Hybrid Analysis", type="primary"):
         if cv_file and jd_text:
-            with st.spinner("Analyzing Concept Coverage..."):
-                # Load
+            with st.spinner("Running Double-Pass verification..."):
                 cv_text = TextProcessor.extract_text(cv_file)
                 if len(cv_text) < 50:
-                    st.error("Resume is empty or unreadable.")
+                    st.error("CV empty")
                     return
-                    
-                @st.cache_resource
-                def load_model(): return SemanticCoverageEngine()
                 
-                engine = load_model()
+                @st.cache_resource
+                def load_engine(): return HybridCoverageEngine()
+                
+                engine = load_engine()
                 res = engine.analyze(cv_text, jd_text)
                 
-                # SCORE
                 score = res.final_score * 100
-                color = "#2e7d32" if score > 75 else "#ff9800" if score > 50 else "#d32f2f"
+                color = "#00c853" if score > 75 else "#ffab00" if score > 50 else "#ff1744"
                 
                 st.markdown(f"""
-                <div class="score-card" style="border-top: 5px solid {color}">
-                    <h2 style="margin:0; color: #555;">REQUIREMENT COVERAGE</h2>
-                    <h1 style="font-size: 5em; margin:0; color: {color};">{score:.0f}%</h1>
-                    <h3 style="margin:0;">{res.feedback}</h3>
-                    <p>You met <b>{len(res.satisfied_reqs)}</b> out of <b>{len(res.satisfied_reqs) + len(res.missing_reqs)}</b> requirements.</p>
+                <div style="text-align:center; padding: 20px; background: {color}15; border: 2px solid {color}; border-radius: 15px;">
+                    <h1 style="color:{color}; font-size: 4em; margin:0;">{score:.0f}%</h1>
+                    <h2 style="color:#444; margin:0;">{res.feedback}</h2>
+                    <p>Requirements Met: <b>{len(res.satisfied_reqs)}</b> / {len(res.satisfied_reqs)+len(res.missing_reqs)}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
                 st.divider()
                 
-                # VISUALIZATION
                 c1, c2 = st.columns(2)
                 
                 with c1:
-                    st.subheader(f"✅ Requirements Met ({len(res.satisfied_reqs)})")
-                    st.caption("The AI found evidence for these in your CV:")
-                    if res.satisfied_reqs:
-                        for req in res.satisfied_reqs:
-                            st.markdown(f'<div class="req-pass">✔ {req}</div>', unsafe_allow_html=True)
-                    else:
-                        st.warning("No requirements met.")
-
+                    st.subheader(f"✅ Matched Requirements ({len(res.satisfied_reqs)})")
+                    for item in res.satisfied_reqs:
+                        st.markdown(f"""
+                        <div class="match-card">
+                            <b>{item.requirement}</b><br>
+                            <span class="badge">{item.match_type} Match</span>
+                            <div class="evidence-text">"Found evidence: {item.evidence[:100]}..."</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
                 with c2:
-                    st.subheader(f"❌ Requirements Missing ({len(res.missing_reqs)})")
-                    st.caption("The AI could not find clear evidence for these:")
-                    if res.missing_reqs:
-                        for req in res.missing_reqs:
-                            st.markdown(f'<div class="req-fail">✘ {req}</div>', unsafe_allow_html=True)
-                    else:
-                        st.success("All requirements met!")
-
-        else:
-            st.info("Please upload both files.")
+                    st.subheader(f"❌ Unmet Requirements ({len(res.missing_reqs)})")
+                    for req in res.missing_reqs:
+                        st.markdown(f"""
+                        <div class="miss-card">
+                            <b>{req}</b><br>
+                            <div class="evidence-text">Could not find semantic meaning OR keywords for this.</div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
