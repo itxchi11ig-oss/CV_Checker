@@ -146,6 +146,13 @@ TRANSLATIONS = {
     }
 }
 
+LANGUAGE_MAP = {
+    Language.ENGLISH: "en",
+    Language.GERMAN: "de",
+    Language.SPANISH: "es"
+}
+
+
 # ==================== MODEL LAYER ====================
 
 @dataclass
@@ -441,46 +448,60 @@ class CVEvaluationController:
 
 # ==================== VIEW LAYER (Streamlit UI) ====================
 
-def get_text(key: str, language: str) -> str:
-    if language not in TRANSLATIONS:
-        language = "en"  # fallback
-    return TRANSLATIONS[language].get(key, key)
+def get_text(key: str, language_code: str) -> str:
+    if language_code not in TRANSLATIONS:
+        language_code = "en"
+    return TRANSLATIONS[language_code].get(key, key)
+)
+
 
 def render_sidebar(language: Language):
-    """Render sidebar with settings"""
+    """Render settings sidebar and return selected language, GPT toggle, API key"""
+
+    # Mapping Enum → translations keys
+    LANGUAGE_MAP = {
+        Language.ENGLISH: "en",
+        Language.GERMAN: "de",
+        Language.SPANISH: "es",
+    }
+
+    # Mapping displayed string → Enum
+    DISPLAY_TO_ENUM = {
+        "English": Language.ENGLISH,
+        "Deutsch": Language.GERMAN,
+        "Español": Language.SPANISH,
+    }
+
+    # Get language code for translation
+    lang_code = LANGUAGE_MAP.get(language, "en")
+
     st.sidebar.title("⚙️ Settings")
-    
-    selected_lang = st.sidebar.selectbox(
-        get_text("language_label", language),
-        options=[
-            ("English", Language.ENGLISH),
-            ("Deutsch", Language.GERMAN),
-            ("Français", Language.FRENCH),
-            ("Español", Language.SPANISH),
-            ("Italiano", Language.ITALIAN)
-        ],
-        format_func=lambda x: x[0],
-        index=[Language.ENGLISH, Language.GERMAN, Language.FRENCH, 
-               Language.SPANISH, Language.ITALIAN].index(language)
+
+    # SELECT LANGUAGE
+    selected_label = st.sidebar.selectbox(
+        get_text("language_label", lang_code),
+        options=list(DISPLAY_TO_ENUM.keys()),
+        index=list(DISPLAY_TO_ENUM.values()).index(language)
+        if language in DISPLAY_TO_ENUM.values() else 0
     )
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader(get_text("model_selection", language))
-    
+
+    # Convert label → Enum
+    selected_language = DISPLAY_TO_ENUM[selected_label]
+
+    # GPT TOGGLE
     use_gpt = st.sidebar.checkbox(
-        get_text("use_gpt", language),
+        get_text("use_gpt", lang_code),
         value=False
     )
-    
-    api_key = None
-    if use_gpt:
-        api_key = st.sidebar.text_input(
-            get_text("api_key_label", language),
-            type="password",
-            help=get_text("api_key_help", language)
-        )
-    
-    return selected_lang[1], use_gpt, api_key
+
+    # API KEY
+    api_key = st.sidebar.text_input(
+        get_text("api_key", lang_code),
+        type="password"
+    )
+
+    return selected_language, use_gpt, api_key
+
 
 def render_header(language: Language):
     """Render application header"""
